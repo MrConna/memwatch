@@ -16,10 +16,8 @@ if arguments.contains("--self-test") {
 enum OnceCommand {
     static func run() {
         do {
-            let sampler = MemorySampler()
-            let snapshot = try sampler.sample()
-            let analyzer = MemoryAnalyzer()
-            let analysis = analyzer.analyze(snapshot: snapshot, settings: MemorySettings(notificationsEnabled: false))
+            let snapshot = try MemorySampler().sample()
+            let analysis = MemoryAnalyzer().analyze(snapshot: snapshot, settings: MemorySettings(notificationsEnabled: false))
             print("MemWatch sample")
             print("state: \(analysis.level.rawValue)")
             print("used: \(formatBytes(snapshot.usedBytes)) / \(formatBytes(snapshot.totalBytes)) (\(formatPercent(snapshot.usedRatio)))")
@@ -31,7 +29,7 @@ enum OnceCommand {
             }
             print("top processes:")
             for process in snapshot.topProcesses {
-                print("- \(process.name) [\(process.pid)]: \(formatBytes(process.residentBytes))")
+                print("- \(process.name) [\(process.pid)] \(process.kind.rawValue): \(formatBytes(process.residentBytes))")
             }
             Foundation.exit(0)
         } catch {
@@ -111,20 +109,20 @@ struct MemWatchApp: App {
         MenuBarExtra {
             StatusPopover()
                 .environmentObject(monitor)
-                .frame(width: 360)
+                .frame(width: 430)
                 .onAppear {
                     monitor.start()
                 }
         } label: {
             Text(menuTitle)
-                .foregroundStyle(color)
+                .foregroundStyle(menuColor)
         }
         .menuBarExtraStyle(.window)
 
         Settings {
             SettingsView()
                 .environmentObject(monitor)
-                .frame(width: 420, height: 360)
+                .frame(width: 460, height: 460)
         }
     }
 
@@ -133,7 +131,7 @@ struct MemWatchApp: App {
         return "MEM \(formatPercent(snapshot.usedRatio))"
     }
 
-    private var color: Color {
+    private var menuColor: Color {
         switch monitor.analysis.level {
         case .critical: .red
         case .warning: .orange
@@ -144,8 +142,31 @@ struct MemWatchApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var welcomeWindow: NSWindow?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        showWelcomeIfNeeded()
+    }
+
+    private func showWelcomeIfNeeded() {
+        let key = "memwatch.welcome.v2.shown"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        UserDefaults.standard.set(true, forKey: key)
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 340),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "MemWatch"
+        window.contentView = NSHostingView(rootView: WelcomeView())
+        window.center()
+        window.level = .floating
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        welcomeWindow = window
     }
 }
 
@@ -153,20 +174,24 @@ struct StatusPopover: View {
     @EnvironmentObject private var monitor: MemoryMonitor
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            header
-            if let snapshot = monitor.snapshot {
-                metrics(snapshot)
-                reasons
-                processList(snapshot.topProcesses)
-                latestEvent
-            } else {
-                Text("Sampling memory...")
-                    .foregroundStyle(.secondary)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                header
+                if let snapshot = monitor.snapshot {
+                    memorySummary(snapshot)
+                    metricGrid(snapshot)
+                    trendLine
+                    diagnosis
+                    processList(snapshot.topProcesses)
+                    eventList
+                } else {
+                    loadingState
+                }
+                controls
             }
-            controls
+            .padding(16)
         }
-        .padding(16)
+        .frame(maxHeight: 620)
         .onAppear {
             monitor.sampleNow()
         }
@@ -180,96 +205,167 @@ struct StatusPopover: View {
             Text("MemWatch")
                 .font(.headline)
             Spacer()
-            Text(monitor.analysis.level.rawValue.capitalized)
-                .font(.subheadline)
+            Text(statusTitle)
+                .font(.caption)
+                .fontWeight(.semibold)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(statusColor.opacity(0.14))
                 .foregroundStyle(statusColor)
+                .clipShape(Capsule())
         }
     }
 
-    private func metrics(_ snapshot: MemorySnapshot) -> some View {
-        Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 8) {
-            metricRow("Used", "\(formatBytes(snapshot.usedBytes)) / \(formatBytes(snapshot.totalBytes))")
-            metricRow("Available", formatBytes(snapshot.availableBytes))
-            metricRow("Swap", formatBytes(snapshot.swapUsedBytes))
-            metricRow("Pressure", snapshot.pressure.rawValue.capitalized)
-        }
-    }
+    private func memorySummary(_ snapshot: MemorySnapshot) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(formatPercent(snapshot.usedRatio))
+                    .font(.system(size: 34, weight: .semibold, design: .rounded))
+                Text("memory used")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(snapshot.sampledAt.formatted(date: .omitted, time: .shortened))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
-    private func metricRow(_ label: String, _ value: String) -> some View {
-        GridRow {
-            Text(label)
+            ProgressView(value: min(max(snapshot.usedRatio, 0), 1))
+                .tint(statusColor)
+
+            Text(summaryLine(snapshot))
+                .font(.callout)
                 .foregroundStyle(.secondary)
-            Text(value)
-                .fontWeight(.medium)
         }
     }
 
-    private var reasons: some View {
-        VStack(alignment: .leading, spacing: 4) {
+    private func metricGrid(_ snapshot: MemorySnapshot) -> some View {
+        Grid(horizontalSpacing: 10, verticalSpacing: 10) {
+            GridRow {
+                MetricTile(title: "Used", value: formatBytes(snapshot.usedBytes))
+                MetricTile(title: "Available", value: formatBytes(snapshot.availableBytes))
+            }
+            GridRow {
+                MetricTile(title: "Swap", value: formatBytes(snapshot.swapUsedBytes))
+                MetricTile(title: "Pressure", value: snapshot.pressure.rawValue.capitalized)
+            }
+        }
+    }
+
+    private var diagnosis: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionHeader(title: "Diagnosis")
             if let error = monitor.snapshot?.errorMessage {
                 Text(error)
                     .foregroundStyle(.red)
             } else if monitor.analysis.reasons.isEmpty {
-                Text("No abnormal memory pattern detected.")
+                Text("Memory looks healthy. No abnormal pattern detected.")
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(monitor.analysis.reasons, id: \.self) { reason in
-                    Text(reason)
+                    Label(reason, systemImage: "exclamationmark.triangle.fill")
                         .font(.callout)
+                        .foregroundStyle(statusColor)
                 }
             }
         }
+    }
+
+    private var trendLine: some View {
+        HStack(spacing: 8) {
+            Image(systemName: monitor.abnormalSince == nil ? "checkmark.circle.fill" : "clock.badge.exclamationmark")
+                .foregroundStyle(monitor.abnormalSince == nil ? .green : statusColor)
+            Text(trendText)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+        .padding(10)
+        .background(Color.secondary.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private func processList(_ processes: [ProcessUsage]) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Top Processes")
-                .font(.subheadline)
-                .fontWeight(.semibold)
+        VStack(alignment: .leading, spacing: 8) {
+            SectionHeader(title: "Top Processes")
             ForEach(processes) { process in
-                HStack {
-                    Text(process.name)
-                        .lineLimit(1)
-                    Spacer()
-                    Text(formatBytes(process.residentBytes))
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                }
+                ProcessRow(process: process)
             }
         }
     }
 
-    private var latestEvent: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Latest Event")
-                .font(.subheadline)
-                .fontWeight(.semibold)
-            if let event = monitor.events.first {
-                Text(event.message)
-                    .font(.callout)
-                    .lineLimit(3)
-                Text(event.date.formatted(date: .abbreviated, time: .standard))
-                    .font(.caption)
+    private var eventList: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionHeader(title: "Recent Events")
+            if monitor.events.isEmpty {
+                Text("No abnormal events recorded.")
                     .foregroundStyle(.secondary)
             } else {
-                Text("No abnormal events yet.")
-                    .foregroundStyle(.secondary)
+                ForEach(monitor.events.prefix(3)) { event in
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack {
+                            Text(event.level.rawValue.capitalized)
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(event.level == .critical ? .red : .orange)
+                            Spacer()
+                            Text(event.date.formatted(date: .omitted, time: .shortened))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Text(event.message)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                    .padding(10)
+                    .background(Color.secondary.opacity(0.08))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
             }
         }
     }
 
     private var controls: some View {
         HStack {
-            Button("Refresh") {
+            Button {
                 monitor.sampleNow()
+            } label: {
+                Label("Refresh", systemImage: "arrow.clockwise")
             }
-            Button("Clear Events") {
+            Button {
                 monitor.clearEvents()
+            } label: {
+                Label("Clear", systemImage: "trash")
             }
             Spacer()
-            Button("Quit") {
-                NSApp.terminate(nil)
+            Button {
+                openLoginItems()
+            } label: {
+                Label("Login Items", systemImage: "gear")
             }
+            Button {
+                NSApp.terminate(nil)
+            } label: {
+                Label("Quit", systemImage: "power")
+            }
+        }
+        .buttonStyle(.borderless)
+    }
+
+    private var loadingState: some View {
+        HStack {
+            ProgressView()
+                .scaleEffect(0.7)
+            Text("Sampling memory...")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var statusTitle: String {
+        switch monitor.analysis.level {
+        case .critical: "Critical"
+        case .warning: "Warning"
+        case .normal: "Normal"
+        case .unknown: "Sampling"
         }
     }
 
@@ -281,14 +377,45 @@ struct StatusPopover: View {
         case .unknown: .secondary
         }
     }
+
+    private func summaryLine(_ snapshot: MemorySnapshot) -> String {
+        if monitor.analysis.level == .normal {
+            return "\(formatBytes(snapshot.availableBytes)) available, \(formatBytes(snapshot.swapUsedBytes)) swap."
+        }
+        return monitor.analysis.reasons.first ?? "Memory pressure needs attention."
+    }
+
+    private var trendText: String {
+        if let abnormalSince = monitor.abnormalSince {
+            return "Abnormal since \(abnormalSince.formatted(date: .omitted, time: .shortened))."
+        }
+        if let recoveredAt = monitor.lastRecoveredAt {
+            return "Recovered at \(recoveredAt.formatted(date: .omitted, time: .shortened))."
+        }
+        return "No sustained abnormal pressure in this session."
+    }
 }
 
 struct SettingsView: View {
     @EnvironmentObject private var monitor: MemoryMonitor
     @State private var ignoredText = ""
+    @State private var preset: MemorySensitivityPreset = .balanced
+    @State private var showAdvanced = false
 
     var body: some View {
         Form {
+            Section("Preset") {
+                Picker("Sensitivity", selection: $preset) {
+                    ForEach([MemorySensitivityPreset.relaxed, .balanced, .sensitive], id: \.self) { preset in
+                        Text(preset.title).tag(preset)
+                    }
+                }
+                .pickerStyle(.segmented)
+                Button("Apply \(preset.title)") {
+                    applyPreset(preset)
+                }
+            }
+
             Section("Sampling") {
                 Stepper(value: binding(\.samplingIntervalSeconds), in: 5...120, step: 5) {
                     Text("Interval: \(Int(monitor.settings.samplingIntervalSeconds)) seconds")
@@ -296,7 +423,7 @@ struct SettingsView: View {
                 Toggle("Notifications", isOn: binding(\.notificationsEnabled))
             }
 
-            Section("Thresholds") {
+            DisclosureGroup("Advanced Thresholds", isExpanded: $showAdvanced) {
                 Slider(value: binding(\.warningUsedRatio), in: 0.50...0.95, step: 0.01) {
                     Text("Warning")
                 } minimumValueLabel: {
@@ -323,6 +450,15 @@ struct SettingsView: View {
                     saveIgnored()
                 }
             }
+
+            Section("Install") {
+                Button("Open Login Items Settings") {
+                    openLoginItems()
+                }
+                Text("Add MemWatch to Login Items if you want it to start with macOS.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(20)
         .onAppear {
@@ -339,11 +475,132 @@ struct SettingsView: View {
         )
     }
 
+    private func applyPreset(_ preset: MemorySensitivityPreset) {
+        let notifications = monitor.settings.notificationsEnabled
+        let ignored = monitor.settings.ignoredProcessNames
+        var settings = preset.settings
+        settings.notificationsEnabled = notifications
+        settings.ignoredProcessNames = ignored
+        monitor.settings = settings
+    }
+
     private func saveIgnored() {
         let names = ignoredText
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         monitor.updateSettings { $0.ignoredProcessNames = names }
+    }
+}
+
+struct WelcomeView: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 12) {
+                Image(systemName: "memorychip")
+                    .font(.system(size: 34))
+                    .foregroundStyle(.blue)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("MemWatch is running")
+                        .font(.title2)
+                        .fontWeight(.semibold)
+                    Text("Look for MEM in the menu bar.")
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Click MEM to inspect memory pressure and top processes.", systemImage: "menubar.rectangle")
+                Label("Use Chrome Task Manager for renderer processes.", systemImage: "safari")
+                Label("Add MemWatch to Login Items to start it with macOS.", systemImage: "power")
+            }
+            .font(.callout)
+
+            Spacer()
+
+            HStack {
+                Button("Open Login Items") {
+                    openLoginItems()
+                }
+                Spacer()
+                Button("Got It") {
+                    NSApp.keyWindow?.close()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(24)
+    }
+}
+
+struct MetricTile: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.callout)
+                .fontWeight(.semibold)
+                .monospacedDigit()
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Color.secondary.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+struct SectionHeader: View {
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(.caption)
+            .fontWeight(.semibold)
+            .foregroundStyle(.secondary)
+            .textCase(.uppercase)
+    }
+}
+
+struct ProcessRow: View {
+    let process: ProcessUsage
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(process.name)
+                        .font(.callout)
+                        .fontWeight(.medium)
+                        .lineLimit(1)
+                    Text("\(process.kind.rawValue) · PID \(process.pid)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(formatBytes(process.residentBytes))
+                    .font(.callout)
+                    .fontWeight(.semibold)
+                    .monospacedDigit()
+            }
+            Text(process.recommendation)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+        }
+        .padding(10)
+        .background(Color.secondary.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+func openLoginItems() {
+    if let url = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension") {
+        NSWorkspace.shared.open(url)
     }
 }

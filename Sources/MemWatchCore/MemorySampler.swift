@@ -133,7 +133,7 @@ public struct MemorySampler {
 
             let name = normalizeProcessName(command)
             guard !ignored.contains(name.lowercased()) else { return nil }
-            return ProcessUsage(pid: pid, name: name, residentBytes: rssKB * 1024)
+            return ProcessUsage(pid: pid, name: name, residentBytes: rssKB * 1024, kind: classifyProcess(command: command, name: name))
         }
 
         return rows
@@ -174,6 +174,25 @@ public struct MemorySampler {
         let lastPathComponent = trimmed.split(separator: "/").last.map(String.init) ?? trimmed
         let firstToken = lastPathComponent.split(separator: " ").first.map(String.init)
         return firstToken?.isEmpty == false ? firstToken! : lastPathComponent
+    }
+
+    private static func classifyProcess(command: String, name: String) -> ProcessKind {
+        let lowercasedCommand = command.lowercased()
+        let lowercasedName = name.lowercased()
+
+        if lowercasedCommand.contains("--type=renderer") || lowercasedName.contains("renderer") {
+            return .renderer
+        }
+        if lowercasedCommand.contains("--type=gpu-process") {
+            return .gpu
+        }
+        if lowercasedName == "google chrome" || lowercasedCommand.hasSuffix("/google chrome") {
+            return .mainApp
+        }
+        if lowercasedCommand.contains("--type=") || lowercasedName.contains("helper") {
+            return .helper
+        }
+        return .unknown
     }
 }
 

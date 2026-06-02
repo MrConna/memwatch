@@ -48,7 +48,7 @@ public final class MemoryAnalyzer {
         var event: MemoryEvent?
         if shouldNotify {
             lastNotifiedLevel = level
-            let message = reasons.isEmpty ? "Memory pressure is \(level.rawValue)" : reasons.joined(separator: ". ")
+            let message = eventMessage(level: level, snapshot: snapshot, reasons: reasons)
             event = MemoryEvent(level: level, message: message, topProcesses: snapshot.topProcesses)
         }
 
@@ -57,6 +57,21 @@ public final class MemoryAnalyzer {
         }
 
         return MemoryAnalysis(level: level, reasons: reasons, shouldNotify: shouldNotify, event: event)
+    }
+
+    private func eventMessage(level: PressureLevel, snapshot: MemorySnapshot, reasons: [String]) -> String {
+        var parts = reasons
+        parts.insert("\(formatPercent(snapshot.usedRatio)) used", at: 0)
+        if snapshot.swapUsedBytes > 0 {
+            parts.append("\(formatBytes(snapshot.swapUsedBytes)) swap")
+        }
+        if let top = snapshot.topProcesses.first {
+            parts.append("Top: \(top.name) \(formatBytes(top.residentBytes))")
+        }
+        if parts.isEmpty {
+            return "Memory pressure is \(level.rawValue)"
+        }
+        return parts.joined(separator: ". ")
     }
 
     public func reset() {
@@ -77,4 +92,3 @@ public func formatBytes(_ bytes: Int64) -> String {
 public func formatPercent(_ ratio: Double) -> String {
     String(format: "%.0f%%", ratio * 100)
 }
-

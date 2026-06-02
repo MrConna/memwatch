@@ -51,12 +51,52 @@ public struct ProcessUsage: Identifiable, Codable, Equatable {
     public var pid: Int32
     public var name: String
     public var residentBytes: Int64
+    public var kind: ProcessKind
 
-    public init(pid: Int32, name: String, residentBytes: Int64) {
+    public init(pid: Int32, name: String, residentBytes: Int64, kind: ProcessKind = .unknown) {
         self.pid = pid
         self.name = name
         self.residentBytes = residentBytes
+        self.kind = kind
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case pid
+        case name
+        case residentBytes
+        case kind
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        pid = try container.decode(Int32.self, forKey: .pid)
+        name = try container.decode(String.self, forKey: .name)
+        residentBytes = try container.decode(Int64.self, forKey: .residentBytes)
+        kind = try container.decodeIfPresent(ProcessKind.self, forKey: .kind) ?? .unknown
+    }
+
+    public var recommendation: String {
+        switch kind {
+        case .renderer:
+            return "Use Chrome Task Manager or close the related tab. Avoid killing the Chrome main process."
+        case .gpu:
+            return "GPU helper. Close video-heavy tabs first; restart Chrome only if graphics feel broken."
+        case .mainApp:
+            return "Main app process. Quit the app only when you want to close all related windows."
+        case .helper:
+            return "Helper process. Prefer closing the owning app or tab instead of killing it directly."
+        case .unknown:
+            return "Review the app before force quitting. Save work first."
+        }
+    }
+}
+
+public enum ProcessKind: String, Codable, Equatable, CaseIterable {
+    case mainApp = "Main App"
+    case renderer = "Renderer"
+    case gpu = "GPU"
+    case helper = "Helper"
+    case unknown = "Unknown"
 }
 
 public struct MemorySnapshot: Equatable {
@@ -126,6 +166,51 @@ public struct MemorySettings: Codable, Equatable {
     }
 }
 
+public enum MemorySensitivityPreset: String, Codable, CaseIterable, Identifiable {
+    case relaxed
+    case balanced
+    case sensitive
+    case custom
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .relaxed: "Relaxed"
+        case .balanced: "Balanced"
+        case .sensitive: "Sensitive"
+        case .custom: "Custom"
+        }
+    }
+
+    public var settings: MemorySettings {
+        switch self {
+        case .relaxed:
+            MemorySettings(
+                samplingIntervalSeconds: 30,
+                warningUsedRatio: 0.88,
+                criticalUsedRatio: 0.95,
+                swapWarningBytes: 8 * 1024 * 1024 * 1024,
+                lowAvailableBytes: 512 * 1024 * 1024,
+                consecutiveSamplesForNotification: 3
+            )
+        case .balanced:
+            MemorySettings()
+        case .sensitive:
+            MemorySettings(
+                samplingIntervalSeconds: 10,
+                warningUsedRatio: 0.70,
+                criticalUsedRatio: 0.85,
+                swapWarningBytes: 2 * 1024 * 1024 * 1024,
+                lowAvailableBytes: 2 * 1024 * 1024 * 1024,
+                consecutiveSamplesForNotification: 2
+            )
+        case .custom:
+            MemorySettings()
+        }
+    }
+}
+
 public struct MemoryEvent: Identifiable, Codable, Equatable {
     public var id: UUID
     public var date: Date
@@ -161,4 +246,3 @@ public extension Int64 {
         Double(self) / 1024 / 1024 / 1024
     }
 }
-

@@ -36,6 +36,17 @@ open dist/MemWatch.app
 
 The app bundle is ad-hoc signed for local use. Full notarized DMG packaging is out of scope for V1.
 
+## Install To Applications
+
+```bash
+chmod +x scripts/install.sh
+scripts/install.sh
+```
+
+After installation, look for `MEM <percent>` in the menu bar. MemWatch is a menu bar app, so double-clicking the app starts it but does not open a normal document-style window.
+
+To start it with macOS, open System Settings > General > Login Items and add `/Applications/MemWatch.app`.
+
 ## Defaults
 
 - Samples every 15 seconds.
@@ -44,6 +55,13 @@ The app bundle is ad-hoc signed for local use. Full notarized DMG packaging is o
 - Swap warning above 4 GB.
 - Low available memory warning below 1 GB.
 - Sends a notification after 2 consecutive abnormal samples.
+
+## Productized UI
+
+- First launch explains where to click in the menu bar.
+- The popover shows status, memory progress, metrics, diagnosis, top processes, and recent events.
+- Chrome renderer processes include a safe recommendation to use Chrome Task Manager or close the related tab.
+- Settings include Relaxed, Balanced, and Sensitive presets plus advanced thresholds.
 
 ## Notes
 

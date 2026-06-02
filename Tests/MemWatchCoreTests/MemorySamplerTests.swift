@@ -51,4 +51,29 @@ final class MemorySamplerTests: XCTestCase {
         XCTAssertEqual(processes.map(\.name), ["Chrome", "Google Chrome Helper (Renderer)", "python3"])
         XCTAssertEqual(processes.first?.residentBytes, 4_242_424 * 1024)
     }
+
+    func testClassifiesChromeProcessKindsAndRecommendations() {
+        let output = """
+          10 600000 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+          11 500000 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer
+          12 300000 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Helpers/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper --type=gpu-process
+          13 200000 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Helpers/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper --type=utility
+        """
+
+        let processes = MemorySampler.parseProcesses(output, ignoredNames: [], limit: 4)
+
+        XCTAssertEqual(processes.map(\.kind), [.mainApp, .renderer, .gpu, .helper])
+        XCTAssertTrue(processes[1].recommendation.contains("Chrome Task Manager"))
+        XCTAssertTrue(processes[2].recommendation.contains("GPU"))
+    }
+
+    func testDecodesOldProcessUsageWithoutKind() throws {
+        let data = """
+        {"pid":42,"name":"Legacy App","residentBytes":123456}
+        """.data(using: .utf8)!
+
+        let process = try JSONDecoder().decode(ProcessUsage.self, from: data)
+
+        XCTAssertEqual(process.kind, .unknown)
+    }
 }

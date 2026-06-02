@@ -55,4 +55,31 @@ final class MemoryAnalyzerTests: XCTestCase {
         XCTAssertEqual(analysis.level, .warning)
         XCTAssertTrue(analysis.reasons.contains("swap is 5.0 GB"))
     }
+
+    func testPresetThresholds() {
+        XCTAssertEqual(MemorySensitivityPreset.balanced.settings.warningUsedRatio, 0.80)
+        XCTAssertEqual(MemorySensitivityPreset.sensitive.settings.warningUsedRatio, 0.70)
+        XCTAssertEqual(MemorySensitivityPreset.relaxed.settings.warningUsedRatio, 0.88)
+    }
+
+    func testEventMessageIncludesMetricsAndTopProcess() {
+        let analyzer = MemoryAnalyzer()
+        let snapshot = MemorySnapshot(
+            totalBytes: 100,
+            usedBytes: 92,
+            availableBytes: 4,
+            swapUsedBytes: 5 * 1024 * 1024 * 1024,
+            pressure: .critical,
+            topProcesses: [
+                ProcessUsage(pid: 1, name: "Google Chrome Helper (Renderer)", residentBytes: 3 * 1024 * 1024 * 1024, kind: .renderer)
+            ]
+        )
+
+        _ = analyzer.analyze(snapshot: snapshot, settings: MemorySettings(consecutiveSamplesForNotification: 2))
+        let analysis = analyzer.analyze(snapshot: snapshot, settings: MemorySettings(consecutiveSamplesForNotification: 2))
+
+        XCTAssertTrue(analysis.event?.message.contains("92%") ?? false)
+        XCTAssertTrue(analysis.event?.message.contains("5.0 GB swap") ?? false)
+        XCTAssertTrue(analysis.event?.message.contains("Google Chrome Helper") ?? false)
+    }
 }

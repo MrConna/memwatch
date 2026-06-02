@@ -5,6 +5,8 @@ public final class MemoryMonitor: ObservableObject {
     @Published public private(set) var snapshot: MemorySnapshot?
     @Published public private(set) var analysis = MemoryAnalysis(level: .unknown, reasons: [], shouldNotify: false, event: nil)
     @Published public private(set) var isRunning = false
+    @Published public private(set) var abnormalSince: Date?
+    @Published public private(set) var lastRecoveredAt: Date?
 
     private let sampler: MemorySampler
     private let analyzer: MemoryAnalyzer
@@ -55,6 +57,7 @@ public final class MemoryMonitor: ObservableObject {
         do {
             let currentSnapshot = try sampler.sample(settings: currentSettings)
             let currentAnalysis = analyzer.analyze(snapshot: currentSnapshot, settings: currentSettings)
+            updateTrend(sampledAt: currentSnapshot.sampledAt, level: currentAnalysis.level)
             snapshot = currentSnapshot
             analysis = currentAnalysis
             if let event = currentAnalysis.event {
@@ -97,5 +100,19 @@ public final class MemoryMonitor: ObservableObject {
                 monitor.sampleNow()
             }
         }
+    }
+
+    private func updateTrend(sampledAt: Date, level: PressureLevel) {
+        if level >= .warning {
+            if abnormalSince == nil {
+                abnormalSince = sampledAt
+            }
+            return
+        }
+
+        if abnormalSince != nil {
+            lastRecoveredAt = sampledAt
+        }
+        abnormalSince = nil
     }
 }
