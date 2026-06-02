@@ -109,7 +109,7 @@ struct MemWatchApp: App {
         MenuBarExtra {
             StatusPopover()
                 .environmentObject(monitor)
-                .frame(width: 430)
+                .frame(width: 360)
                 .onAppear {
                     monitor.start()
                 }
@@ -174,24 +174,20 @@ struct StatusPopover: View {
     @EnvironmentObject private var monitor: MemoryMonitor
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                header
-                if let snapshot = monitor.snapshot {
-                    memorySummary(snapshot)
-                    metricGrid(snapshot)
-                    trendLine
-                    diagnosis
-                    processList(snapshot.topProcesses)
-                    eventList
-                } else {
-                    loadingState
-                }
-                controls
+        VStack(alignment: .leading, spacing: 12) {
+            header
+            if let snapshot = monitor.snapshot {
+                memorySummary(snapshot)
+                metricGrid(snapshot)
+                compactDiagnosis
+                processList(Array(snapshot.topProcesses.prefix(3)))
+            } else {
+                loadingState
             }
-            .padding(16)
+            Divider()
+            controls
         }
-        .frame(maxHeight: 620)
+        .padding(14)
         .onAppear {
             monitor.sampleNow()
         }
@@ -208,23 +204,19 @@ struct StatusPopover: View {
             Text(statusTitle)
                 .font(.caption)
                 .fontWeight(.semibold)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(statusColor.opacity(0.14))
                 .foregroundStyle(statusColor)
-                .clipShape(Capsule())
         }
     }
 
     private func memorySummary(_ snapshot: MemorySnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
                 Text(formatPercent(snapshot.usedRatio))
-                    .font(.system(size: 34, weight: .semibold, design: .rounded))
-                Text("memory used")
+                    .font(.system(size: 30, weight: .semibold, design: .rounded))
+                Text("used")
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text(snapshot.sampledAt.formatted(date: .omitted, time: .shortened))
+                Text(formatBytes(snapshot.availableBytes))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -233,93 +225,66 @@ struct StatusPopover: View {
                 .tint(statusColor)
 
             Text(summaryLine(snapshot))
-                .font(.callout)
+                .font(.caption)
                 .foregroundStyle(.secondary)
+                .lineLimit(2)
         }
     }
 
     private func metricGrid(_ snapshot: MemorySnapshot) -> some View {
-        Grid(horizontalSpacing: 10, verticalSpacing: 10) {
+        Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 5) {
             GridRow {
-                MetricTile(title: "Used", value: formatBytes(snapshot.usedBytes))
-                MetricTile(title: "Available", value: formatBytes(snapshot.availableBytes))
+                metricText("Used", formatBytes(snapshot.usedBytes))
+                metricText("Available", formatBytes(snapshot.availableBytes))
             }
             GridRow {
-                MetricTile(title: "Swap", value: formatBytes(snapshot.swapUsedBytes))
-                MetricTile(title: "Pressure", value: snapshot.pressure.rawValue.capitalized)
+                metricText("Swap", formatBytes(snapshot.swapUsedBytes))
+                metricText("Pressure", snapshot.pressure.rawValue.capitalized)
             }
         }
     }
 
-    private var diagnosis: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            SectionHeader(title: "Diagnosis")
+    private func metricText(_ title: String, _ value: String) -> some View {
+        HStack(spacing: 4) {
+            Text(title)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .fontWeight(.medium)
+                .monospacedDigit()
+        }
+        .font(.caption)
+    }
+
+    private var compactDiagnosis: some View {
+        VStack(alignment: .leading, spacing: 5) {
             if let error = monitor.snapshot?.errorMessage {
                 Text(error)
+                    .font(.caption)
                     .foregroundStyle(.red)
             } else if monitor.analysis.reasons.isEmpty {
-                Text("Memory looks healthy. No abnormal pattern detected.")
+                Label("No abnormal memory pressure.", systemImage: "checkmark.circle.fill")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
-            } else {
-                ForEach(monitor.analysis.reasons, id: \.self) { reason in
-                    Label(reason, systemImage: "exclamationmark.triangle.fill")
-                        .font(.callout)
-                        .foregroundStyle(statusColor)
-                }
+            } else if let reason = monitor.analysis.reasons.first {
+                Label(reason, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(statusColor)
+                    .lineLimit(2)
+            }
+
+            if let abnormalSince = monitor.abnormalSince {
+                Text("Abnormal since \(abnormalSince.formatted(date: .omitted, time: .shortened))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
-    }
-
-    private var trendLine: some View {
-        HStack(spacing: 8) {
-            Image(systemName: monitor.abnormalSince == nil ? "checkmark.circle.fill" : "clock.badge.exclamationmark")
-                .foregroundStyle(monitor.abnormalSince == nil ? .green : statusColor)
-            Text(trendText)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-        }
-        .padding(10)
-        .background(Color.secondary.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private func processList(_ processes: [ProcessUsage]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             SectionHeader(title: "Top Processes")
             ForEach(processes) { process in
                 ProcessRow(process: process)
-            }
-        }
-    }
-
-    private var eventList: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            SectionHeader(title: "Recent Events")
-            if monitor.events.isEmpty {
-                Text("No abnormal events recorded.")
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(monitor.events.prefix(3)) { event in
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack {
-                            Text(event.level.rawValue.capitalized)
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                                .foregroundStyle(event.level == .critical ? .red : .orange)
-                            Spacer()
-                            Text(event.date.formatted(date: .omitted, time: .shortened))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Text(event.message)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                    }
-                    .padding(10)
-                    .background(Color.secondary.opacity(0.08))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                }
             }
         }
     }
@@ -331,22 +296,26 @@ struct StatusPopover: View {
             } label: {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
+            .help("Refresh")
             Button {
                 monitor.clearEvents()
             } label: {
                 Label("Clear", systemImage: "trash")
             }
+            .help("Clear events")
             Spacer()
             Button {
                 openLoginItems()
             } label: {
-                Label("Login Items", systemImage: "gear")
+                Image(systemName: "gear")
             }
+            .help("Open Login Items")
             Button {
                 NSApp.terminate(nil)
             } label: {
-                Label("Quit", systemImage: "power")
+                Image(systemName: "power")
             }
+            .help("Quit")
         }
         .buttonStyle(.borderless)
     }
@@ -385,15 +354,6 @@ struct StatusPopover: View {
         return monitor.analysis.reasons.first ?? "Memory pressure needs attention."
     }
 
-    private var trendText: String {
-        if let abnormalSince = monitor.abnormalSince {
-            return "Abnormal since \(abnormalSince.formatted(date: .omitted, time: .shortened))."
-        }
-        if let recoveredAt = monitor.lastRecoveredAt {
-            return "Recovered at \(recoveredAt.formatted(date: .omitted, time: .shortened))."
-        }
-        return "No sustained abnormal pressure in this session."
-    }
 }
 
 struct SettingsView: View {
@@ -571,11 +531,11 @@ struct ProcessRow: View {
     let process: ProcessUsage
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(process.name)
-                        .font(.callout)
+                        .font(.caption)
                         .fontWeight(.medium)
                         .lineLimit(1)
                     Text("\(process.kind.rawValue) · PID \(process.pid)")
@@ -584,18 +544,28 @@ struct ProcessRow: View {
                 }
                 Spacer()
                 Text(formatBytes(process.residentBytes))
-                    .font(.callout)
+                    .font(.caption)
                     .fontWeight(.semibold)
                     .monospacedDigit()
             }
-            Text(process.recommendation)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
+            if process.kind == .renderer || process.kind == .gpu {
+                Text(shortRecommendation)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
         }
-        .padding(10)
-        .background(Color.secondary.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var shortRecommendation: String {
+        switch process.kind {
+        case .renderer:
+            return "Close the related tab or use Chrome Task Manager."
+        case .gpu:
+            return "Close video-heavy tabs before restarting Chrome."
+        default:
+            return process.recommendation
+        }
     }
 }
 
