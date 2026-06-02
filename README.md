@@ -112,6 +112,8 @@ swift build
 scripts/build-app.sh
 ```
 
+GitHub Actions runs the same core checks on pushes and pull requests to `main`, including universal binary verification.
+
 Install the current build:
 
 ```bash

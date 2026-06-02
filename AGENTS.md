@@ -44,6 +44,8 @@ The universal build should include:
 x86_64 arm64
 ```
 
+The GitHub Actions workflow in `.github/workflows/ci.yml` runs the core verification suite for pushes and pull requests to `main`.
+
 ## Guardrails
 
 - Do not introduce automatic process killing.

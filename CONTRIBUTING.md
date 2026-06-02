@@ -48,6 +48,8 @@ Expected output includes both:
 x86_64 arm64
 ```
 
+GitHub Actions also runs these checks on pushes and pull requests to `main`. Local verification is still expected before opening a PR so feedback stays fast.
+
 ## Coding Guidelines
 
 - Keep sampling and analysis logic in `Sources/MemWatchCore`.
