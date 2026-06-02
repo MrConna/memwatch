@@ -8,7 +8,9 @@ swift run MemWatch --self-test
 swift run MemWatch --once
 swift build
 scripts/build-app.sh
+lipo -archs dist/MemWatch.app/Contents/MacOS/MemWatch
 scripts/install.sh
+lipo -archs /Applications/MemWatch.app/Contents/MacOS/MemWatch
 ```
 
 Manual checks:
@@ -20,6 +22,7 @@ Manual checks:
 - Settings open and presets can be applied.
 - Login Items settings link opens macOS settings.
 - Top process rows include process kind and safe recommendation text.
+- Universal binary output includes `x86_64 arm64`.
 
 Release notes should mention:
 
