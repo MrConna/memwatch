@@ -26,6 +26,7 @@ Run these from the repository root:
 swift test
 swift run MemWatch --self-test
 swift run MemWatch --once
+swift run MemWatch --report
 swift build
 scripts/build-app.sh
 lipo -archs dist/MemWatch.app/Contents/MacOS/MemWatch

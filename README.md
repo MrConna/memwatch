@@ -21,6 +21,7 @@ It is designed for people who regularly see "your system has run out of applicat
 - Safer Chrome guidance: close the related tab or use Chrome Task Manager before force quitting helpers.
 - Notification cooling, so repeated abnormal samples do not spam the user.
 - Recovery state when memory pressure returns to normal.
+- Copyable diagnostic report for sharing memory state, reasons, top apps, top processes, and safe recommendations.
 - Settings window with sensitivity presets and advanced thresholds.
 - First-launch welcome window explaining where to find the app.
 
@@ -53,6 +54,14 @@ swift run MemWatch --once
 ```
 
 This prints a single memory sample without launching the menu bar UI.
+
+## Diagnostic Report
+
+```bash
+swift run MemWatch --report
+```
+
+This prints a copy-ready diagnostic report. The menu bar popover also has a `Copy Report` action.
 
 ## Self-Test
 
@@ -108,6 +117,7 @@ Run the full local verification before handing work to another developer:
 swift test
 swift run MemWatch --self-test
 swift run MemWatch --once
+swift run MemWatch --report
 swift build
 scripts/build-app.sh
 ```

@@ -67,6 +67,19 @@ final class MemorySamplerTests: XCTestCase {
         XCTAssertTrue(processes[2].recommendation.contains("GPU"))
     }
 
+    func testNonChromeRendererRecommendationNamesOwningApp() {
+        let process = ProcessUsage(
+            pid: 20,
+            name: "Lark Helper (Renderer)",
+            residentBytes: 500 * 1024 * 1024,
+            kind: .renderer,
+            appName: "Lark"
+        )
+
+        XCTAssertTrue(process.recommendation.contains("Lark"))
+        XCTAssertFalse(process.recommendation.contains("Chrome Task Manager"))
+    }
+
     func testExtractsOwningAppAndAggregatesProcesses() {
         let output = """
           10 600000 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome

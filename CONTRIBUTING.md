@@ -32,6 +32,7 @@ Before submitting a change, run:
 swift test
 swift run MemWatch --self-test
 swift run MemWatch --once
+swift run MemWatch --report
 swift build
 scripts/build-app.sh
 ```

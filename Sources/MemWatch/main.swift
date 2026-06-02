@@ -7,6 +7,8 @@ let arguments = CommandLine.arguments.dropFirst()
 
 if arguments.contains("--self-test") {
     SelfTest.run()
+} else if arguments.contains("--report") {
+    ReportCommand.run()
 } else if arguments.contains("--once") {
     OnceCommand.run()
 } else {
@@ -38,6 +40,20 @@ enum OnceCommand {
             Foundation.exit(0)
         } catch {
             fputs("MemWatch sample failed: \(error.localizedDescription)\n", stderr)
+            Foundation.exit(1)
+        }
+    }
+}
+
+enum ReportCommand {
+    static func run() {
+        do {
+            let snapshot = try MemorySampler().sample()
+            let analysis = MemoryAnalyzer().analyze(snapshot: snapshot, settings: MemorySettings(notificationsEnabled: false))
+            print(DiagnosticReport.text(snapshot: snapshot, analysis: analysis))
+            Foundation.exit(0)
+        } catch {
+            fputs("MemWatch report failed: \(error.localizedDescription)\n", stderr)
             Foundation.exit(1)
         }
     }
@@ -176,6 +192,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct StatusPopover: View {
     @EnvironmentObject private var monitor: MemoryMonitor
     @State private var settingsWindow: NSWindow?
+    @State private var copiedReport = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -320,6 +337,14 @@ struct StatusPopover: View {
                 }
                 .help("Clear events")
             }
+            if monitor.snapshot != nil {
+                Button {
+                    copyReport()
+                } label: {
+                    Label(copiedReport ? "Copied" : "Copy Report", systemImage: copiedReport ? "checkmark" : "doc.on.doc")
+                }
+                .help("Copy diagnostic report")
+            }
             Spacer()
             Button {
                 openSettingsWindow()
@@ -427,6 +452,17 @@ struct StatusPopover: View {
             return "\(top.name) uses \(formatBytes(top.residentBytes)). Use the browser task manager if it grows."
         }
         return "No action needed right now."
+    }
+
+    private func copyReport() {
+        guard let snapshot = monitor.snapshot else { return }
+        let report = DiagnosticReport.text(snapshot: snapshot, analysis: monitor.analysis)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(report, forType: .string)
+        copiedReport = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+            copiedReport = false
+        }
     }
 
     private func openSettingsWindow() {
