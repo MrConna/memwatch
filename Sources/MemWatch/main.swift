@@ -172,6 +172,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 struct StatusPopover: View {
     @EnvironmentObject private var monitor: MemoryMonitor
+    @State private var settingsWindow: NSWindow?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -406,6 +407,28 @@ struct StatusPopover: View {
         }
         return "No action needed right now."
     }
+
+    private func openSettingsWindow() {
+        if let settingsWindow, settingsWindow.isVisible {
+            settingsWindow.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 460),
+            styleMask: [.titled, .closable, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "MemWatch Settings"
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: SettingsView().environmentObject(monitor))
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        settingsWindow = window
+    }
 }
 
 struct SettingsView: View {
@@ -599,11 +622,6 @@ struct ProcessRow: View {
             return process.recommendation
         }
     }
-}
-
-func openSettingsWindow() {
-    NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-    NSApp.activate(ignoringOtherApps: true)
 }
 
 func openLoginItems() {
