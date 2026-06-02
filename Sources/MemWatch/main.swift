@@ -131,8 +131,7 @@ struct MemWatchApp: App {
     }
 
     private var menuTitle: String {
-        guard let snapshot = monitor.snapshot else { return "MEM --" }
-        return "MEM \(formatPercent(snapshot.usedRatio))"
+        MenuStatus.title(snapshot: monitor.snapshot, analysis: monitor.analysis)
     }
 
     private var menuColor: Color {
@@ -383,6 +382,9 @@ struct StatusPopover: View {
     }
 
     private func nextStepIcon(_ snapshot: MemorySnapshot) -> String {
+        if monitor.analysis.didRecover {
+            return "arrow.down.heart.fill"
+        }
         if monitor.analysis.level >= .warning {
             return "wrench.and.screwdriver.fill"
         }
@@ -396,6 +398,9 @@ struct StatusPopover: View {
     }
 
     private func nextStepTitle(_ snapshot: MemorySnapshot) -> String {
+        if monitor.analysis.didRecover {
+            return "Recovered"
+        }
         if monitor.analysis.level >= .warning {
             return "Needs attention"
         }
@@ -409,6 +414,9 @@ struct StatusPopover: View {
     }
 
     private func nextStepDetail(_ snapshot: MemorySnapshot) -> String {
+        if monitor.analysis.didRecover {
+            return "Memory pressure returned to normal."
+        }
         if let reason = monitor.analysis.reasons.first {
             return reason
         }

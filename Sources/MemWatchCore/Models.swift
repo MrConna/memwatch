@@ -171,6 +171,7 @@ public struct MemorySettings: Codable, Equatable {
     public var swapWarningBytes: Int64
     public var lowAvailableBytes: Int64
     public var consecutiveSamplesForNotification: Int
+    public var notificationCooldownSamples: Int
     public var notificationsEnabled: Bool
     public var ignoredProcessNames: [String]
 
@@ -181,6 +182,7 @@ public struct MemorySettings: Codable, Equatable {
         swapWarningBytes: Int64 = 4 * 1024 * 1024 * 1024,
         lowAvailableBytes: Int64 = 1 * 1024 * 1024 * 1024,
         consecutiveSamplesForNotification: Int = 2,
+        notificationCooldownSamples: Int = 8,
         notificationsEnabled: Bool = true,
         ignoredProcessNames: [String] = []
     ) {
@@ -190,8 +192,34 @@ public struct MemorySettings: Codable, Equatable {
         self.swapWarningBytes = swapWarningBytes
         self.lowAvailableBytes = lowAvailableBytes
         self.consecutiveSamplesForNotification = consecutiveSamplesForNotification
+        self.notificationCooldownSamples = notificationCooldownSamples
         self.notificationsEnabled = notificationsEnabled
         self.ignoredProcessNames = ignoredProcessNames
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case samplingIntervalSeconds
+        case warningUsedRatio
+        case criticalUsedRatio
+        case swapWarningBytes
+        case lowAvailableBytes
+        case consecutiveSamplesForNotification
+        case notificationCooldownSamples
+        case notificationsEnabled
+        case ignoredProcessNames
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        samplingIntervalSeconds = try container.decode(Double.self, forKey: .samplingIntervalSeconds)
+        warningUsedRatio = try container.decode(Double.self, forKey: .warningUsedRatio)
+        criticalUsedRatio = try container.decode(Double.self, forKey: .criticalUsedRatio)
+        swapWarningBytes = try container.decode(Int64.self, forKey: .swapWarningBytes)
+        lowAvailableBytes = try container.decode(Int64.self, forKey: .lowAvailableBytes)
+        consecutiveSamplesForNotification = try container.decode(Int.self, forKey: .consecutiveSamplesForNotification)
+        notificationCooldownSamples = try container.decodeIfPresent(Int.self, forKey: .notificationCooldownSamples) ?? 8
+        notificationsEnabled = try container.decode(Bool.self, forKey: .notificationsEnabled)
+        ignoredProcessNames = try container.decode([String].self, forKey: .ignoredProcessNames)
     }
 }
 
@@ -262,13 +290,15 @@ public struct MemoryAnalysis: Equatable {
     public var shouldNotify: Bool
     public var event: MemoryEvent?
     public var growingProcess: ProcessGrowth?
+    public var didRecover: Bool
 
-    public init(level: PressureLevel, reasons: [String], shouldNotify: Bool, event: MemoryEvent?, growingProcess: ProcessGrowth? = nil) {
+    public init(level: PressureLevel, reasons: [String], shouldNotify: Bool, event: MemoryEvent?, growingProcess: ProcessGrowth? = nil, didRecover: Bool = false) {
         self.level = level
         self.reasons = reasons
         self.shouldNotify = shouldNotify
         self.event = event
         self.growingProcess = growingProcess
+        self.didRecover = didRecover
     }
 }
 
@@ -295,5 +325,21 @@ public struct ProcessGrowth: Equatable {
 public extension Int64 {
     var memwatchGB: Double {
         Double(self) / 1024 / 1024 / 1024
+    }
+}
+
+public enum MenuStatus {
+    public static func title(snapshot: MemorySnapshot?, analysis: MemoryAnalysis) -> String {
+        guard let snapshot else { return "MEM --" }
+        if analysis.level == .critical {
+            return "MEM !!"
+        }
+        if snapshot.swapUsedBytes >= 1024 * 1024 * 1024 {
+            return "SWAP \(Int(round(snapshot.swapUsedBytes.memwatchGB)))G"
+        }
+        if analysis.growingProcess != nil {
+            return "MEM UP"
+        }
+        return "MEM \(formatPercent(snapshot.usedRatio))"
     }
 }

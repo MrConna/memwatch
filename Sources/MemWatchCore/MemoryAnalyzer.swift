@@ -4,6 +4,8 @@ public final class MemoryAnalyzer {
     private var consecutiveAbnormalSamples = 0
     private var lastNotifiedLevel: PressureLevel = .normal
     private var previousProcessBytes: [Int32: Int64] = [:]
+    private var samplesSinceLastNotification: Int?
+    private var wasAbnormal = false
 
     public init() {}
 
@@ -43,19 +45,27 @@ public final class MemoryAnalyzer {
         }
 
         let abnormal = level >= .warning
+        let didRecover = wasAbnormal && !abnormal
         consecutiveAbnormalSamples = abnormal ? consecutiveAbnormalSamples + 1 : 0
 
         let reachedNotificationWindow = consecutiveAbnormalSamples >= max(1, settings.consecutiveSamplesForNotification)
+        let cooldownSatisfied = samplesSinceLastNotification.map { $0 >= settings.notificationCooldownSamples } ?? true
         let shouldNotify = settings.notificationsEnabled
             && abnormal
             && reachedNotificationWindow
-            && (level > lastNotifiedLevel || consecutiveAbnormalSamples == settings.consecutiveSamplesForNotification)
+            && (level > lastNotifiedLevel || consecutiveAbnormalSamples == settings.consecutiveSamplesForNotification || cooldownSatisfied)
 
         var event: MemoryEvent?
         if shouldNotify {
             lastNotifiedLevel = level
             let message = eventMessage(level: level, snapshot: snapshot, reasons: reasons)
             event = MemoryEvent(level: level, message: message, topProcesses: snapshot.topProcesses)
+            samplesSinceLastNotification = 0
+        } else if didRecover {
+            event = MemoryEvent(level: .normal, message: "Memory pressure recovered", topProcesses: snapshot.topProcesses)
+            samplesSinceLastNotification = nil
+        } else if samplesSinceLastNotification != nil {
+            samplesSinceLastNotification? += 1
         }
 
         if !abnormal {
@@ -63,8 +73,9 @@ public final class MemoryAnalyzer {
         }
 
         updateProcessHistory(snapshot: snapshot)
+        wasAbnormal = abnormal
 
-        return MemoryAnalysis(level: level, reasons: reasons, shouldNotify: shouldNotify, event: event, growingProcess: growingProcess)
+        return MemoryAnalysis(level: level, reasons: reasons, shouldNotify: shouldNotify, event: event, growingProcess: growingProcess, didRecover: didRecover)
     }
 
     private func eventMessage(level: PressureLevel, snapshot: MemorySnapshot, reasons: [String]) -> String {
@@ -86,6 +97,8 @@ public final class MemoryAnalyzer {
         consecutiveAbnormalSamples = 0
         lastNotifiedLevel = .normal
         previousProcessBytes = [:]
+        samplesSinceLastNotification = nil
+        wasAbnormal = false
     }
 
     private func detectGrowth(snapshot: MemorySnapshot) -> ProcessGrowth? {

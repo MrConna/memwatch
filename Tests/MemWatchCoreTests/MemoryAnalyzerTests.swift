@@ -62,6 +62,25 @@ final class MemoryAnalyzerTests: XCTestCase {
         XCTAssertEqual(MemorySensitivityPreset.relaxed.settings.warningUsedRatio, 0.88)
     }
 
+    func testDecodesSettingsSavedBeforeNotificationCooldownExisted() throws {
+        let json = """
+        {
+          "samplingIntervalSeconds": 15,
+          "warningUsedRatio": 0.8,
+          "criticalUsedRatio": 0.9,
+          "swapWarningBytes": 4294967296,
+          "lowAvailableBytes": 1073741824,
+          "consecutiveSamplesForNotification": 2,
+          "notificationsEnabled": true,
+          "ignoredProcessNames": []
+        }
+        """
+
+        let settings = try JSONDecoder().decode(MemorySettings.self, from: Data(json.utf8))
+
+        XCTAssertEqual(settings.notificationCooldownSamples, 8)
+    }
+
     func testEventMessageIncludesMetricsAndTopProcess() {
         let analyzer = MemoryAnalyzer()
         let snapshot = MemorySnapshot(
@@ -112,5 +131,60 @@ final class MemoryAnalyzerTests: XCTestCase {
 
         XCTAssertEqual(analysis.growingProcess?.pid, 42)
         XCTAssertTrue(analysis.reasons.contains { $0.contains("grew by 550 MB") })
+    }
+
+    func testDoesNotRepeatNotificationsDuringCooldown() {
+        let analyzer = MemoryAnalyzer()
+        let settings = MemorySettings(consecutiveSamplesForNotification: 2, notificationCooldownSamples: 3)
+        let snapshot = MemorySnapshot(
+            totalBytes: 16 * 1024 * 1024 * 1024,
+            usedBytes: Int64(Double(16 * 1024 * 1024 * 1024) * 0.85),
+            availableBytes: 2 * 1024 * 1024 * 1024,
+            swapUsedBytes: 0,
+            pressure: .normal,
+            topProcesses: []
+        )
+
+        let first = analyzer.analyze(snapshot: snapshot, settings: settings)
+        let second = analyzer.analyze(snapshot: snapshot, settings: settings)
+        let third = analyzer.analyze(snapshot: snapshot, settings: settings)
+        let fourth = analyzer.analyze(snapshot: snapshot, settings: settings)
+        let fifth = analyzer.analyze(snapshot: snapshot, settings: settings)
+        let sixth = analyzer.analyze(snapshot: snapshot, settings: settings)
+
+        XCTAssertFalse(first.shouldNotify)
+        XCTAssertTrue(second.shouldNotify)
+        XCTAssertFalse(third.shouldNotify)
+        XCTAssertFalse(fourth.shouldNotify)
+        XCTAssertFalse(fifth.shouldNotify)
+        XCTAssertTrue(sixth.shouldNotify)
+    }
+
+    func testEmitsRecoveryEventAfterAbnormalSampleRecovers() {
+        let analyzer = MemoryAnalyzer()
+        let settings = MemorySettings(consecutiveSamplesForNotification: 1)
+        let abnormal = MemorySnapshot(
+            totalBytes: 16 * 1024 * 1024 * 1024,
+            usedBytes: Int64(Double(16 * 1024 * 1024 * 1024) * 0.90),
+            availableBytes: 2 * 1024 * 1024 * 1024,
+            swapUsedBytes: 0,
+            pressure: .normal,
+            topProcesses: []
+        )
+        let normal = MemorySnapshot(
+            totalBytes: 16 * 1024 * 1024 * 1024,
+            usedBytes: 8 * 1024 * 1024 * 1024,
+            availableBytes: 8 * 1024 * 1024 * 1024,
+            swapUsedBytes: 0,
+            pressure: .normal,
+            topProcesses: []
+        )
+
+        _ = analyzer.analyze(snapshot: abnormal, settings: settings)
+        let recovered = analyzer.analyze(snapshot: normal, settings: settings)
+
+        XCTAssertTrue(recovered.didRecover)
+        XCTAssertEqual(recovered.event?.level, .normal)
+        XCTAssertTrue(recovered.event?.message.contains("recovered") ?? false)
     }
 }
