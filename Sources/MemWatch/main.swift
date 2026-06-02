@@ -179,7 +179,7 @@ struct StatusPopover: View {
             if let snapshot = monitor.snapshot {
                 memorySummary(snapshot)
                 metricGrid(snapshot)
-                compactDiagnosis
+                nextStep(snapshot)
                 processList(Array(snapshot.topProcesses.prefix(3)))
             } else {
                 loadingState
@@ -198,31 +198,42 @@ struct StatusPopover: View {
             Circle()
                 .fill(statusColor)
                 .frame(width: 10, height: 10)
+                .accessibilityHidden(true)
             Text("MemWatch")
                 .font(.headline)
             Spacer()
-            Text(statusTitle)
+            Label(statusTitle, systemImage: statusIcon)
                 .font(.caption)
                 .fontWeight(.semibold)
                 .foregroundStyle(statusColor)
+                .labelStyle(.titleAndIcon)
         }
     }
 
     private func memorySummary(_ snapshot: MemorySnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
                 Text(formatPercent(snapshot.usedRatio))
-                    .font(.system(size: 30, weight: .semibold, design: .rounded))
+                    .font(.system(size: 32, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
                 Text("used")
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text(formatBytes(snapshot.availableBytes))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(formatBytes(snapshot.availableBytes))
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .monospacedDigit()
+                    Text("available")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             ProgressView(value: min(max(snapshot.usedRatio, 0), 1))
                 .tint(statusColor)
+                .accessibilityLabel("Memory used")
+                .accessibilityValue(formatPercent(snapshot.usedRatio))
 
             Text(summaryLine(snapshot))
                 .font(.caption)
@@ -232,7 +243,7 @@ struct StatusPopover: View {
     }
 
     private func metricGrid(_ snapshot: MemorySnapshot) -> some View {
-        Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 5) {
+        Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
             GridRow {
                 metricText("Used", formatBytes(snapshot.usedBytes))
                 metricText("Available", formatBytes(snapshot.availableBytes))
@@ -255,29 +266,29 @@ struct StatusPopover: View {
         .font(.caption)
     }
 
-    private var compactDiagnosis: some View {
-        VStack(alignment: .leading, spacing: 5) {
+    private func nextStep(_ snapshot: MemorySnapshot) -> some View {
+        HStack(alignment: .top, spacing: 8) {
             if let error = monitor.snapshot?.errorMessage {
+                Image(systemName: "xmark.octagon.fill")
+                    .foregroundStyle(.red)
                 Text(error)
                     .font(.caption)
                     .foregroundStyle(.red)
-            } else if monitor.analysis.reasons.isEmpty {
-                Label("No abnormal memory pressure.", systemImage: "checkmark.circle.fill")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else if let reason = monitor.analysis.reasons.first {
-                Label(reason, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
+            } else {
+                Image(systemName: nextStepIcon(snapshot))
                     .foregroundStyle(statusColor)
-                    .lineLimit(2)
-            }
-
-            if let abnormalSince = monitor.abnormalSince {
-                Text("Abnormal since \(abnormalSince.formatted(date: .omitted, time: .shortened))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(nextStepTitle(snapshot))
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                    Text(nextStepDetail(snapshot))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
             }
         }
+        .padding(.vertical, 2)
     }
 
     private func processList(_ processes: [ProcessUsage]) -> some View {
@@ -297,27 +308,30 @@ struct StatusPopover: View {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
             .help("Refresh")
-            Button {
-                monitor.clearEvents()
-            } label: {
-                Label("Clear", systemImage: "trash")
+            if !monitor.events.isEmpty {
+                Button {
+                    monitor.clearEvents()
+                } label: {
+                    Label("Clear", systemImage: "trash")
+                }
+                .help("Clear events")
             }
-            .help("Clear events")
             Spacer()
             Button {
-                openLoginItems()
+                openSettingsWindow()
             } label: {
-                Image(systemName: "gear")
+                Label("Settings", systemImage: "gear")
             }
-            .help("Open Login Items")
-            Button {
+            .help("Settings")
+            Button(role: .destructive) {
                 NSApp.terminate(nil)
             } label: {
-                Image(systemName: "power")
+                Label("Quit", systemImage: "power")
             }
             .help("Quit")
         }
         .buttonStyle(.borderless)
+        .controlSize(.small)
     }
 
     private var loadingState: some View {
@@ -338,6 +352,15 @@ struct StatusPopover: View {
         }
     }
 
+    private var statusIcon: String {
+        switch monitor.analysis.level {
+        case .critical: "exclamationmark.octagon.fill"
+        case .warning: "exclamationmark.triangle.fill"
+        case .normal: "checkmark.circle.fill"
+        case .unknown: "circle.dotted"
+        }
+    }
+
     private var statusColor: Color {
         switch monitor.analysis.level {
         case .critical: .red
@@ -349,11 +372,40 @@ struct StatusPopover: View {
 
     private func summaryLine(_ snapshot: MemorySnapshot) -> String {
         if monitor.analysis.level == .normal {
-            return "\(formatBytes(snapshot.availableBytes)) available, \(formatBytes(snapshot.swapUsedBytes)) swap."
+            return "\(formatBytes(snapshot.swapUsedBytes)) swap. Last checked \(snapshot.sampledAt.formatted(date: .omitted, time: .shortened))."
         }
         return monitor.analysis.reasons.first ?? "Memory pressure needs attention."
     }
 
+    private func nextStepIcon(_ snapshot: MemorySnapshot) -> String {
+        if monitor.analysis.level >= .warning {
+            return "wrench.and.screwdriver.fill"
+        }
+        if let top = snapshot.topProcesses.first, top.kind == .renderer, top.residentBytes >= 1024 * 1024 * 1024 {
+            return "safari.fill"
+        }
+        return "checkmark.circle.fill"
+    }
+
+    private func nextStepTitle(_ snapshot: MemorySnapshot) -> String {
+        if monitor.analysis.level >= .warning {
+            return "Needs attention"
+        }
+        if let top = snapshot.topProcesses.first, top.kind == .renderer, top.residentBytes >= 1024 * 1024 * 1024 {
+            return "Largest tab process"
+        }
+        return "Looks healthy"
+    }
+
+    private func nextStepDetail(_ snapshot: MemorySnapshot) -> String {
+        if let reason = monitor.analysis.reasons.first {
+            return reason
+        }
+        if let top = snapshot.topProcesses.first, top.kind == .renderer, top.residentBytes >= 1024 * 1024 * 1024 {
+            return "\(top.name) uses \(formatBytes(top.residentBytes)). Use the browser task manager if it grows."
+        }
+        return "No action needed right now."
+    }
 }
 
 struct SettingsView: View {
@@ -411,7 +463,7 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Install") {
+            Section("Startup") {
                 Button("Open Login Items Settings") {
                     openLoginItems()
                 }
@@ -464,22 +516,22 @@ struct WelcomeView: View {
                     Text("MemWatch is running")
                         .font(.title2)
                         .fontWeight(.semibold)
-                    Text("Look for MEM in the menu bar.")
+                    Text("Click MEM in the menu bar.")
                         .foregroundStyle(.secondary)
                 }
             }
 
             VStack(alignment: .leading, spacing: 10) {
-                Label("Click MEM to inspect memory pressure and top processes.", systemImage: "menubar.rectangle")
-                Label("Use Chrome Task Manager for renderer processes.", systemImage: "safari")
-                Label("Add MemWatch to Login Items to start it with macOS.", systemImage: "power")
+                Label("Check memory pressure without opening Activity Monitor.", systemImage: "gauge.with.dots.needle.67percent")
+                Label("Renderer rows usually point to browser tabs.", systemImage: "rectangle.on.rectangle")
+                Label("Use Settings for thresholds and startup behavior.", systemImage: "gear")
             }
             .font(.callout)
 
             Spacer()
 
             HStack {
-                Button("Open Login Items") {
+                Button("Login Items") {
                     openLoginItems()
                 }
                 Spacer()
@@ -493,37 +545,16 @@ struct WelcomeView: View {
     }
 }
 
-struct MetricTile: View {
-    let title: String
-    let value: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.callout)
-                .fontWeight(.semibold)
-                .monospacedDigit()
-                .lineLimit(1)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(Color.secondary.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-}
-
 struct SectionHeader: View {
     let title: String
 
     var body: some View {
         Text(title)
-            .font(.caption)
+            .font(.caption2)
             .fontWeight(.semibold)
             .foregroundStyle(.secondary)
             .textCase(.uppercase)
+            .padding(.top, 2)
     }
 }
 
@@ -539,10 +570,10 @@ struct ProcessRow: View {
                         .fontWeight(.medium)
                         .lineLimit(1)
                     Text("\(process.kind.rawValue) · PID \(process.pid)")
-                        .font(.caption)
+                        .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
-                Spacer()
+                Spacer(minLength: 8)
                 Text(formatBytes(process.residentBytes))
                     .font(.caption)
                     .fontWeight(.semibold)
@@ -555,6 +586,7 @@ struct ProcessRow: View {
                     .lineLimit(1)
             }
         }
+        .accessibilityElement(children: .combine)
     }
 
     private var shortRecommendation: String {
@@ -567,6 +599,11 @@ struct ProcessRow: View {
             return process.recommendation
         }
     }
+}
+
+func openSettingsWindow() {
+    NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+    NSApp.activate(ignoringOtherApps: true)
 }
 
 func openLoginItems() {
