@@ -3,6 +3,7 @@ import Foundation
 public final class MemoryAnalyzer {
     private var consecutiveAbnormalSamples = 0
     private var lastNotifiedLevel: PressureLevel = .normal
+    private var previousProcessBytes: [Int32: Int64] = [:]
 
     public init() {}
 
@@ -36,6 +37,11 @@ public final class MemoryAnalyzer {
             reasons.append("\(top.name) uses \(formatBytes(top.residentBytes))")
         }
 
+        let growingProcess = detectGrowth(snapshot: snapshot)
+        if let growingProcess {
+            reasons.append("\(growingProcess.name) grew by \(formatBytes(growingProcess.deltaBytes))")
+        }
+
         let abnormal = level >= .warning
         consecutiveAbnormalSamples = abnormal ? consecutiveAbnormalSamples + 1 : 0
 
@@ -56,7 +62,9 @@ public final class MemoryAnalyzer {
             lastNotifiedLevel = .normal
         }
 
-        return MemoryAnalysis(level: level, reasons: reasons, shouldNotify: shouldNotify, event: event)
+        updateProcessHistory(snapshot: snapshot)
+
+        return MemoryAnalysis(level: level, reasons: reasons, shouldNotify: shouldNotify, event: event, growingProcess: growingProcess)
     }
 
     private func eventMessage(level: PressureLevel, snapshot: MemorySnapshot, reasons: [String]) -> String {
@@ -77,6 +85,28 @@ public final class MemoryAnalyzer {
     public func reset() {
         consecutiveAbnormalSamples = 0
         lastNotifiedLevel = .normal
+        previousProcessBytes = [:]
+    }
+
+    private func detectGrowth(snapshot: MemorySnapshot) -> ProcessGrowth? {
+        let minimumGrowth = Int64(512 * 1024 * 1024)
+        return snapshot.topProcesses.compactMap { process in
+            guard let previous = previousProcessBytes[process.pid] else { return nil }
+            let growth = process.residentBytes - previous
+            guard growth >= minimumGrowth else { return nil }
+            return ProcessGrowth(
+                pid: process.pid,
+                name: process.name,
+                appName: process.appName,
+                previousBytes: previous,
+                currentBytes: process.residentBytes
+            )
+        }
+        .max(by: { $0.deltaBytes < $1.deltaBytes })
+    }
+
+    private func updateProcessHistory(snapshot: MemorySnapshot) {
+        previousProcessBytes = Dictionary(uniqueKeysWithValues: snapshot.topProcesses.map { ($0.pid, $0.residentBytes) })
     }
 }
 

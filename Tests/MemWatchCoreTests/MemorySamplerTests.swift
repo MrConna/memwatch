@@ -67,6 +67,28 @@ final class MemorySamplerTests: XCTestCase {
         XCTAssertTrue(processes[2].recommendation.contains("GPU"))
     }
 
+    func testExtractsOwningAppAndAggregatesProcesses() {
+        let output = """
+          10 600000 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+          11 500000 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer
+          20 300000 /Applications/Lark.app/Contents/MacOS/Lark Helper (Renderer) --type=renderer
+        """
+
+        let snapshot = MemorySnapshot(
+            totalBytes: 100,
+            usedBytes: 50,
+            availableBytes: 50,
+            swapUsedBytes: 0,
+            pressure: .normal,
+            topProcesses: MemorySampler.parseProcesses(output, ignoredNames: [], limit: 10)
+        )
+
+        XCTAssertEqual(snapshot.topProcesses[0].appName, "Google Chrome")
+        XCTAssertEqual(snapshot.appGroups.first?.name, "Google Chrome")
+        XCTAssertEqual(snapshot.appGroups.first?.residentBytes, (600000 + 500000) * 1024)
+        XCTAssertEqual(snapshot.appGroups.first?.processCount, 2)
+    }
+
     func testDecodesOldProcessUsageWithoutKind() throws {
         let data = """
         {"pid":42,"name":"Legacy App","residentBytes":123456}
@@ -75,5 +97,6 @@ final class MemorySamplerTests: XCTestCase {
         let process = try JSONDecoder().decode(ProcessUsage.self, from: data)
 
         XCTAssertEqual(process.kind, .unknown)
+        XCTAssertEqual(process.appName, "Legacy App")
     }
 }

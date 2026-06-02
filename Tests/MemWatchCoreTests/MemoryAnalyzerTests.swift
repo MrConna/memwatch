@@ -82,4 +82,35 @@ final class MemoryAnalyzerTests: XCTestCase {
         XCTAssertTrue(analysis.event?.message.contains("5.0 GB swap") ?? false)
         XCTAssertTrue(analysis.event?.message.contains("Google Chrome Helper") ?? false)
     }
+
+    func testDetectsFastGrowingProcessAcrossSamples() {
+        let analyzer = MemoryAnalyzer()
+        let settings = MemorySettings(notificationsEnabled: false)
+        let first = MemorySnapshot(
+            totalBytes: 16 * 1024 * 1024 * 1024,
+            usedBytes: 8 * 1024 * 1024 * 1024,
+            availableBytes: 4 * 1024 * 1024 * 1024,
+            swapUsedBytes: 0,
+            pressure: .normal,
+            topProcesses: [
+                ProcessUsage(pid: 42, name: "Google Chrome Helper (Renderer)", residentBytes: 400 * 1024 * 1024, kind: .renderer, appName: "Google Chrome")
+            ]
+        )
+        let second = MemorySnapshot(
+            totalBytes: 16 * 1024 * 1024 * 1024,
+            usedBytes: 9 * 1024 * 1024 * 1024,
+            availableBytes: 3 * 1024 * 1024 * 1024,
+            swapUsedBytes: 0,
+            pressure: .normal,
+            topProcesses: [
+                ProcessUsage(pid: 42, name: "Google Chrome Helper (Renderer)", residentBytes: 950 * 1024 * 1024, kind: .renderer, appName: "Google Chrome")
+            ]
+        )
+
+        _ = analyzer.analyze(snapshot: first, settings: settings)
+        let analysis = analyzer.analyze(snapshot: second, settings: settings)
+
+        XCTAssertEqual(analysis.growingProcess?.pid, 42)
+        XCTAssertTrue(analysis.reasons.contains { $0.contains("grew by 550 MB") })
+    }
 }

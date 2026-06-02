@@ -15,7 +15,7 @@ public struct MemorySampler {
         let processes = Self.parseProcesses(
             try runner.run("ps -axo pid=,rss=,command= | sort -nrk2 | head -20"),
             ignoredNames: settings.ignoredProcessNames,
-            limit: 5
+            limit: 20
         )
 
         return MemorySnapshot(
@@ -133,7 +133,13 @@ public struct MemorySampler {
 
             let name = normalizeProcessName(command)
             guard !ignored.contains(name.lowercased()) else { return nil }
-            return ProcessUsage(pid: pid, name: name, residentBytes: rssKB * 1024, kind: classifyProcess(command: command, name: name))
+            return ProcessUsage(
+                pid: pid,
+                name: name,
+                residentBytes: rssKB * 1024,
+                kind: classifyProcess(command: command, name: name),
+                appName: owningAppName(command: command, fallback: name)
+            )
         }
 
         return rows
@@ -193,6 +199,14 @@ public struct MemorySampler {
             return .helper
         }
         return .unknown
+    }
+
+    private static func owningAppName(command: String, fallback: String) -> String {
+        let pattern = #"/Applications/([^/]+)\.app/"#
+        if let match = command.firstMatch(pattern) {
+            return match[1]
+        }
+        return fallback
     }
 }
 

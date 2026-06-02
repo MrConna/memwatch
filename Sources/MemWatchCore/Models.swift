@@ -52,12 +52,14 @@ public struct ProcessUsage: Identifiable, Codable, Equatable {
     public var name: String
     public var residentBytes: Int64
     public var kind: ProcessKind
+    public var appName: String
 
-    public init(pid: Int32, name: String, residentBytes: Int64, kind: ProcessKind = .unknown) {
+    public init(pid: Int32, name: String, residentBytes: Int64, kind: ProcessKind = .unknown, appName: String? = nil) {
         self.pid = pid
         self.name = name
         self.residentBytes = residentBytes
         self.kind = kind
+        self.appName = appName ?? name
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -65,6 +67,7 @@ public struct ProcessUsage: Identifiable, Codable, Equatable {
         case name
         case residentBytes
         case kind
+        case appName
     }
 
     public init(from decoder: Decoder) throws {
@@ -73,6 +76,7 @@ public struct ProcessUsage: Identifiable, Codable, Equatable {
         name = try container.decode(String.self, forKey: .name)
         residentBytes = try container.decode(Int64.self, forKey: .residentBytes)
         kind = try container.decodeIfPresent(ProcessKind.self, forKey: .kind) ?? .unknown
+        appName = try container.decodeIfPresent(String.self, forKey: .appName) ?? name
     }
 
     public var recommendation: String {
@@ -88,6 +92,21 @@ public struct ProcessUsage: Identifiable, Codable, Equatable {
         case .unknown:
             return "Review the app before force quitting. Save work first."
         }
+    }
+}
+
+public struct AppMemoryGroup: Identifiable, Equatable {
+    public var id: String { name }
+    public var name: String
+    public var residentBytes: Int64
+    public var processCount: Int
+    public var topProcess: ProcessUsage
+
+    public init(name: String, residentBytes: Int64, processCount: Int, topProcess: ProcessUsage) {
+        self.name = name
+        self.residentBytes = residentBytes
+        self.processCount = processCount
+        self.topProcess = topProcess
     }
 }
 
@@ -132,6 +151,16 @@ public struct MemorySnapshot: Equatable {
     public var usedRatio: Double {
         guard totalBytes > 0 else { return 0 }
         return Double(usedBytes) / Double(totalBytes)
+    }
+
+    public var appGroups: [AppMemoryGroup] {
+        let groups = Dictionary(grouping: topProcesses, by: \.appName)
+        return groups.compactMap { name, processes in
+            guard let top = processes.max(by: { $0.residentBytes < $1.residentBytes }) else { return nil }
+            let total = processes.reduce(Int64(0)) { $0 + $1.residentBytes }
+            return AppMemoryGroup(name: name, residentBytes: total, processCount: processes.count, topProcess: top)
+        }
+        .sorted { $0.residentBytes > $1.residentBytes }
     }
 }
 
@@ -232,12 +261,34 @@ public struct MemoryAnalysis: Equatable {
     public var reasons: [String]
     public var shouldNotify: Bool
     public var event: MemoryEvent?
+    public var growingProcess: ProcessGrowth?
 
-    public init(level: PressureLevel, reasons: [String], shouldNotify: Bool, event: MemoryEvent?) {
+    public init(level: PressureLevel, reasons: [String], shouldNotify: Bool, event: MemoryEvent?, growingProcess: ProcessGrowth? = nil) {
         self.level = level
         self.reasons = reasons
         self.shouldNotify = shouldNotify
         self.event = event
+        self.growingProcess = growingProcess
+    }
+}
+
+public struct ProcessGrowth: Equatable {
+    public var pid: Int32
+    public var name: String
+    public var appName: String
+    public var previousBytes: Int64
+    public var currentBytes: Int64
+
+    public init(pid: Int32, name: String, appName: String, previousBytes: Int64, currentBytes: Int64) {
+        self.pid = pid
+        self.name = name
+        self.appName = appName
+        self.previousBytes = previousBytes
+        self.currentBytes = currentBytes
+    }
+
+    public var deltaBytes: Int64 {
+        currentBytes - previousBytes
     }
 }
 

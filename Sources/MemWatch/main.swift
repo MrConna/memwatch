@@ -27,8 +27,12 @@ enum OnceCommand {
             if !analysis.reasons.isEmpty {
                 print("reasons: \(analysis.reasons.joined(separator: "; "))")
             }
+            print("top apps:")
+            for group in snapshot.appGroups.prefix(5) {
+                print("- \(group.name): \(formatBytes(group.residentBytes)) across \(group.processCount) process(es)")
+            }
             print("top processes:")
-            for process in snapshot.topProcesses {
+            for process in snapshot.topProcesses.prefix(5) {
                 print("- \(process.name) [\(process.pid)] \(process.kind.rawValue): \(formatBytes(process.residentBytes))")
             }
             Foundation.exit(0)
@@ -181,7 +185,7 @@ struct StatusPopover: View {
                 memorySummary(snapshot)
                 metricGrid(snapshot)
                 nextStep(snapshot)
-                processList(Array(snapshot.topProcesses.prefix(3)))
+                appList(Array(snapshot.appGroups.prefix(3)))
             } else {
                 loadingState
             }
@@ -292,11 +296,11 @@ struct StatusPopover: View {
         .padding(.vertical, 2)
     }
 
-    private func processList(_ processes: [ProcessUsage]) -> some View {
+    private func appList(_ groups: [AppMemoryGroup]) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            SectionHeader(title: "Top Processes")
-            ForEach(processes) { process in
-                ProcessRow(process: process)
+            SectionHeader(title: "Top Apps")
+            ForEach(groups) { group in
+                AppGroupRow(group: group)
             }
         }
     }
@@ -382,6 +386,9 @@ struct StatusPopover: View {
         if monitor.analysis.level >= .warning {
             return "wrench.and.screwdriver.fill"
         }
+        if monitor.analysis.growingProcess != nil {
+            return "chart.line.uptrend.xyaxis"
+        }
         if let top = snapshot.topProcesses.first, top.kind == .renderer, top.residentBytes >= 1024 * 1024 * 1024 {
             return "safari.fill"
         }
@@ -392,6 +399,9 @@ struct StatusPopover: View {
         if monitor.analysis.level >= .warning {
             return "Needs attention"
         }
+        if monitor.analysis.growingProcess != nil {
+            return "Growing process"
+        }
         if let top = snapshot.topProcesses.first, top.kind == .renderer, top.residentBytes >= 1024 * 1024 * 1024 {
             return "Largest tab process"
         }
@@ -401,6 +411,9 @@ struct StatusPopover: View {
     private func nextStepDetail(_ snapshot: MemorySnapshot) -> String {
         if let reason = monitor.analysis.reasons.first {
             return reason
+        }
+        if let growing = monitor.analysis.growingProcess {
+            return "\(growing.name) grew by \(formatBytes(growing.deltaBytes)). Watch \(growing.appName) first."
         }
         if let top = snapshot.topProcesses.first, top.kind == .renderer, top.residentBytes >= 1024 * 1024 * 1024 {
             return "\(top.name) uses \(formatBytes(top.residentBytes)). Use the browser task manager if it grows."
@@ -578,6 +591,30 @@ struct SectionHeader: View {
             .foregroundStyle(.secondary)
             .textCase(.uppercase)
             .padding(.top, 2)
+    }
+}
+
+struct AppGroupRow: View {
+    let group: AppMemoryGroup
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(group.name)
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .lineLimit(1)
+                Text("\(group.processCount) processes · top \(group.topProcess.kind.rawValue)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            Text(formatBytes(group.residentBytes))
+                .font(.caption)
+                .fontWeight(.semibold)
+                .monospacedDigit()
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 
