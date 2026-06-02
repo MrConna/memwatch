@@ -59,7 +59,7 @@ The app uses macOS-native command line data sources available without special pr
 
 - `vm_stat` for page and memory counters.
 - `sysctl hw.memsize` for total physical memory.
-- `memory_pressure` for system pressure summary where available.
+- `sysctl vm.swapusage` for swap usage.
 - `ps -axo pid,comm,rss` for process memory usage.
 
 All command parsing is isolated behind a monitoring service so the UI can be tested with synthetic snapshots.
