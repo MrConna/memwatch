@@ -136,6 +136,9 @@ struct MemWatchApp: App {
         } label: {
             Text(menuTitle)
                 .foregroundStyle(menuColor)
+                .onAppear {
+                    appDelegate.configure(monitor: monitor)
+                }
         }
         .menuBarExtraStyle(.window)
 
@@ -162,10 +165,22 @@ struct MemWatchApp: App {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var welcomeWindow: NSWindow?
+    private weak var monitor: MemoryMonitor?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         showWelcomeIfNeeded()
+    }
+
+    func configure(monitor: MemoryMonitor) {
+        self.monitor = monitor
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if let monitor {
+            DiagnosticsWindowController.shared.show(monitor: monitor)
+        }
+        return true
     }
 
     private func showWelcomeIfNeeded() {
@@ -186,6 +201,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         welcomeWindow = window
+    }
+}
+
+final class DiagnosticsWindowController {
+    static let shared = DiagnosticsWindowController()
+    private var window: NSWindow?
+
+    private init() {}
+
+    func show(monitor: MemoryMonitor) {
+        if let window, window.isVisible {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 780, height: 640),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "MemWatch Diagnostics"
+        window.isReleasedWhenClosed = false
+        window.contentMinSize = NSSize(width: 680, height: 520)
+        window.contentView = NSHostingView(rootView: DiagnosticsWindowView().environmentObject(monitor))
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        self.window = window
     }
 }
 
@@ -369,6 +414,9 @@ struct StatusPopover: View {
             }
             Divider()
                 .frame(height: 18)
+            ControlIconButton(title: "Open diagnostics window", systemImage: "macwindow") {
+                DiagnosticsWindowController.shared.show(monitor: monitor)
+            }
             ControlIconButton(title: "Open Activity Monitor", systemImage: "gauge.with.dots.needle.67percent") {
                 openActivityMonitor()
             }
@@ -602,6 +650,244 @@ struct SettingsView: View {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         monitor.updateSettings { $0.ignoredProcessNames = names }
+    }
+}
+
+struct DiagnosticsWindowView: View {
+    @EnvironmentObject private var monitor: MemoryMonitor
+    @State private var copiedReport = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            diagnosticsToolbar
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    if let snapshot = monitor.snapshot {
+                        diagnosticsHeader(snapshot)
+                        memorySummary(snapshot)
+                        metricGrid(snapshot)
+                        actionPanel(snapshot)
+                        appPanel(Array(snapshot.appGroups.prefix(6)))
+                        processPanel(Array(snapshot.topProcesses.prefix(10)))
+                        eventPanel
+                    } else {
+                        loadingState
+                    }
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .onAppear {
+            monitor.sampleNow()
+        }
+    }
+
+    private var diagnosticsToolbar: some View {
+        HStack(spacing: 10) {
+            Label("Diagnostics", systemImage: "memorychip")
+                .font(.headline)
+            Spacer()
+            Button {
+                monitor.sampleNow()
+            } label: {
+                Label("Refresh", systemImage: "arrow.clockwise")
+            }
+            if monitor.snapshot != nil {
+                Button {
+                    copyReport()
+                } label: {
+                    Label(copiedReport ? "Copied" : "Copy Report", systemImage: copiedReport ? "checkmark" : "doc.on.doc")
+                }
+            }
+            Button {
+                openActivityMonitor()
+            } label: {
+                Label("Activity Monitor", systemImage: "gauge.with.dots.needle.67percent")
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .controlSize(.small)
+    }
+
+    private func diagnosticsHeader(_ snapshot: MemorySnapshot) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(statusTitle)
+                .font(.title2)
+                .fontWeight(.semibold)
+            Text("Last checked \(snapshot.sampledAt.formatted(date: .omitted, time: .shortened))")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Label(snapshot.pressure.rawValue.capitalized, systemImage: statusIcon)
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(statusColor)
+        }
+    }
+
+    private func memorySummary(_ snapshot: MemorySnapshot) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(formatPercent(snapshot.usedRatio))
+                    .font(.system(size: 42, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                Text("used")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text(formatBytes(snapshot.availableBytes))
+                        .font(.title3)
+                        .fontWeight(.semibold)
+                        .monospacedDigit()
+                    Text("available")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            ProgressView(value: min(max(snapshot.usedRatio, 0), 1))
+                .tint(statusColor)
+                .accessibilityLabel("Memory used")
+                .accessibilityValue(formatPercent(snapshot.usedRatio))
+        }
+    }
+
+    private func metricGrid(_ snapshot: MemorySnapshot) -> some View {
+        Grid(alignment: .leading, horizontalSpacing: 24, verticalSpacing: 8) {
+            GridRow {
+                DiagnosticsMetric(title: "Used", value: formatBytes(snapshot.usedBytes))
+                DiagnosticsMetric(title: "Available", value: formatBytes(snapshot.availableBytes))
+                DiagnosticsMetric(title: "Swap", value: formatBytes(snapshot.swapUsedBytes))
+                DiagnosticsMetric(title: "Pressure", value: snapshot.pressure.rawValue.capitalized)
+            }
+        }
+    }
+
+    private func actionPanel(_ snapshot: MemorySnapshot) -> some View {
+        DiagnosticsSection(title: "How to Free Memory") {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(MemoryGuidance.actions(snapshot: snapshot, analysis: monitor.analysis)) { action in
+                    MemoryActionRow(action: action)
+                }
+            }
+        }
+    }
+
+    private func appPanel(_ groups: [AppMemoryGroup]) -> some View {
+        DiagnosticsSection(title: "Top Apps") {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(groups) { group in
+                    AppGroupRow(group: group)
+                }
+            }
+        }
+    }
+
+    private func processPanel(_ processes: [ProcessUsage]) -> some View {
+        DiagnosticsSection(title: "Process Details") {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(processes) { process in
+                    ProcessRow(process: process)
+                }
+            }
+        }
+    }
+
+    private var eventPanel: some View {
+        DiagnosticsSection(title: "Recent Events") {
+            if monitor.events.isEmpty {
+                Text("No recent memory pressure events.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(monitor.events.prefix(5)) { event in
+                        Text("\(event.date.formatted(date: .omitted, time: .shortened))  \(event.message)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    private var loadingState: some View {
+        HStack {
+            ProgressView()
+            Text("Sampling memory...")
+                .foregroundStyle(.secondary)
+        }
+        .padding(20)
+    }
+
+    private var statusTitle: String {
+        switch monitor.analysis.level {
+        case .critical: "Critical memory pressure"
+        case .warning: "Memory needs attention"
+        case .normal: "Memory looks healthy"
+        case .unknown: "Sampling memory"
+        }
+    }
+
+    private var statusIcon: String {
+        switch monitor.analysis.level {
+        case .critical: "exclamationmark.octagon.fill"
+        case .warning: "exclamationmark.triangle.fill"
+        case .normal: "checkmark.circle.fill"
+        case .unknown: "circle.dotted"
+        }
+    }
+
+    private var statusColor: Color {
+        switch monitor.analysis.level {
+        case .critical: .red
+        case .warning: .orange
+        case .normal: .green
+        case .unknown: .secondary
+        }
+    }
+
+    private func copyReport() {
+        guard let snapshot = monitor.snapshot else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(DiagnosticReport.text(snapshot: snapshot, analysis: monitor.analysis), forType: .string)
+        copiedReport = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+            copiedReport = false
+        }
+    }
+}
+
+struct DiagnosticsMetric: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+            Text(value)
+                .font(.callout)
+                .fontWeight(.semibold)
+                .monospacedDigit()
+        }
+    }
+}
+
+struct DiagnosticsSection<Content: View>: View {
+    let title: String
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionHeader(title: title)
+            content
+        }
     }
 }
 

@@ -100,6 +100,8 @@ scripts/install.sh
 
 After installation, look for `MEM <percent>` in the menu bar. MemWatch is a menu bar app, so double-clicking the app starts it but does not open a normal document-style window.
 
+When MemWatch is already running, opening `/Applications/MemWatch.app` again brings up the full diagnostics window. The menu bar popover also includes a window button for the same view.
+
 To start it with macOS, open System Settings > General > Login Items and add `/Applications/MemWatch.app`.
 
 ## Defaults
