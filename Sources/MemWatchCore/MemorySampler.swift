@@ -23,6 +23,7 @@ public struct MemorySampler {
             usedBytes: counters.usedBytes,
             availableBytes: counters.availableBytes,
             swapUsedBytes: swapUsedBytes,
+            cachedFilesBytes: counters.cachedFilesBytes,
             pressure: pressureLevel,
             topProcesses: processes
         )
@@ -60,14 +61,18 @@ public struct MemorySampler {
 
         let freeBytes = (freePages + speculativePages) * pageSize
         let availableBytes = (freePages + speculativePages + inactivePages) * pageSize
-        let usedBytes = (activePages + inactivePages + wiredPages + compressedPages) * pageSize
+        // Match Activity Monitor: "Memory Used" excludes inactive pages, which are
+        // reclaimable file cache. Inactive is reported separately as cached files.
+        let usedBytes = (activePages + wiredPages + compressedPages) * pageSize
+        let cachedFilesBytes = inactivePages * pageSize
 
         return MemoryCounters(
             pageSize: pageSize,
             totalBytes: totalMemoryBytes,
             freeBytes: freeBytes,
             usedBytes: min(usedBytes, totalMemoryBytes),
-            availableBytes: min(availableBytes, totalMemoryBytes)
+            availableBytes: min(availableBytes, totalMemoryBytes),
+            cachedFilesBytes: min(cachedFilesBytes, totalMemoryBytes)
         )
     }
 
@@ -218,9 +223,24 @@ public struct ParseError: Error, LocalizedError {
     }
 }
 
+private final class RegexCache {
+    static let shared = RegexCache()
+    private var cache: [String: NSRegularExpression] = [:]
+    private let lock = NSLock()
+
+    func regex(for pattern: String) -> NSRegularExpression? {
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached = cache[pattern] { return cached }
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        cache[pattern] = regex
+        return regex
+    }
+}
+
 private extension String {
     func firstMatch(_ pattern: String) -> [String]? {
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        guard let regex = RegexCache.shared.regex(for: pattern) else { return nil }
         let range = NSRange(startIndex..<endIndex, in: self)
         guard let match = regex.firstMatch(in: self, range: range) else { return nil }
         return (0..<match.numberOfRanges).compactMap { index in

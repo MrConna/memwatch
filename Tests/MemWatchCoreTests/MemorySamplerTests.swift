@@ -23,8 +23,9 @@ final class MemorySamplerTests: XCTestCase {
 
         XCTAssertEqual(counters.pageSize, 16_384)
         XCTAssertEqual(counters.freeBytes, 16_384 * (1024 + 512))
-        XCTAssertEqual(counters.usedBytes, 16_384 * (2000 + 3000 + 4000 + 1000))
+        XCTAssertEqual(counters.usedBytes, 16_384 * (2000 + 4000 + 1000))
         XCTAssertEqual(counters.availableBytes, 16_384 * (1024 + 512 + 3000))
+        XCTAssertEqual(counters.cachedFilesBytes, 16_384 * 3000)
     }
 
     func testParsesSwapUsageFromSysctl() throws {

@@ -35,7 +35,7 @@ public final class MemoryAnalyzer {
             reasons.append("available memory is \(formatBytes(snapshot.availableBytes))")
         }
 
-        if let top = snapshot.topProcesses.first, top.residentBytes >= 2 * 1024 * 1024 * 1024 {
+        if let top = snapshot.topProcesses.first, top.residentBytes >= ByteConstants.twoGB {
             reasons.append("\(top.name) uses \(formatBytes(top.residentBytes))")
         }
 
@@ -102,7 +102,7 @@ public final class MemoryAnalyzer {
     }
 
     private func detectGrowth(snapshot: MemorySnapshot) -> ProcessGrowth? {
-        let minimumGrowth = Int64(512 * 1024 * 1024)
+        let minimumGrowth = ByteConstants.halfGB
         return snapshot.topProcesses.compactMap { process in
             guard let previous = previousProcessBytes[process.pid] else { return nil }
             let growth = process.residentBytes - previous

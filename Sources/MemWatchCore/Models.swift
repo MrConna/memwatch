@@ -26,13 +26,15 @@ public struct MemoryCounters: Equatable {
     public var freeBytes: Int64
     public var usedBytes: Int64
     public var availableBytes: Int64
+    public var cachedFilesBytes: Int64
 
-    public init(pageSize: Int64, totalBytes: Int64, freeBytes: Int64, usedBytes: Int64, availableBytes: Int64) {
+    public init(pageSize: Int64, totalBytes: Int64, freeBytes: Int64, usedBytes: Int64, availableBytes: Int64, cachedFilesBytes: Int64 = 0) {
         self.pageSize = pageSize
         self.totalBytes = totalBytes
         self.freeBytes = freeBytes
         self.usedBytes = usedBytes
         self.availableBytes = availableBytes
+        self.cachedFilesBytes = cachedFilesBytes
     }
 }
 
@@ -127,9 +129,11 @@ public struct MemorySnapshot: Equatable {
     public var usedBytes: Int64
     public var availableBytes: Int64
     public var swapUsedBytes: Int64
+    public var cachedFilesBytes: Int64
     public var pressure: PressureLevel
     public var topProcesses: [ProcessUsage]
     public var errorMessage: String?
+    public let appGroups: [AppMemoryGroup]
 
     public init(
         sampledAt: Date = Date(),
@@ -137,6 +141,7 @@ public struct MemorySnapshot: Equatable {
         usedBytes: Int64,
         availableBytes: Int64,
         swapUsedBytes: Int64,
+        cachedFilesBytes: Int64 = 0,
         pressure: PressureLevel,
         topProcesses: [ProcessUsage],
         errorMessage: String? = nil
@@ -146,9 +151,11 @@ public struct MemorySnapshot: Equatable {
         self.usedBytes = usedBytes
         self.availableBytes = availableBytes
         self.swapUsedBytes = swapUsedBytes
+        self.cachedFilesBytes = cachedFilesBytes
         self.pressure = pressure
         self.topProcesses = topProcesses
         self.errorMessage = errorMessage
+        self.appGroups = Self.computeAppGroups(from: topProcesses)
     }
 
     public var usedRatio: Double {
@@ -156,8 +163,8 @@ public struct MemorySnapshot: Equatable {
         return Double(usedBytes) / Double(totalBytes)
     }
 
-    public var appGroups: [AppMemoryGroup] {
-        let groups = Dictionary(grouping: topProcesses, by: \.appName)
+    private static func computeAppGroups(from processes: [ProcessUsage]) -> [AppMemoryGroup] {
+        let groups = Dictionary(grouping: processes, by: \.appName)
         return groups.compactMap { name, processes in
             guard let top = processes.max(by: { $0.residentBytes < $1.residentBytes }) else { return nil }
             let total = processes.reduce(Int64(0)) { $0 + $1.residentBytes }
@@ -182,8 +189,8 @@ public struct MemorySettings: Codable, Equatable {
         samplingIntervalSeconds: Double = 15,
         warningUsedRatio: Double = 0.80,
         criticalUsedRatio: Double = 0.90,
-        swapWarningBytes: Int64 = 4 * 1024 * 1024 * 1024,
-        lowAvailableBytes: Int64 = 1 * 1024 * 1024 * 1024,
+        swapWarningBytes: Int64 = ByteConstants.fourGB,
+        lowAvailableBytes: Int64 = ByteConstants.oneGB,
         consecutiveSamplesForNotification: Int = 2,
         notificationCooldownSamples: Int = 8,
         notificationsEnabled: Bool = true,
@@ -250,8 +257,8 @@ public enum MemorySensitivityPreset: String, Codable, CaseIterable, Identifiable
                 samplingIntervalSeconds: 30,
                 warningUsedRatio: 0.88,
                 criticalUsedRatio: 0.95,
-                swapWarningBytes: 8 * 1024 * 1024 * 1024,
-                lowAvailableBytes: 512 * 1024 * 1024,
+                swapWarningBytes: ByteConstants.eightGB,
+                lowAvailableBytes: ByteConstants.halfGB,
                 consecutiveSamplesForNotification: 3
             )
         case .balanced:
@@ -261,8 +268,8 @@ public enum MemorySensitivityPreset: String, Codable, CaseIterable, Identifiable
                 samplingIntervalSeconds: 10,
                 warningUsedRatio: 0.70,
                 criticalUsedRatio: 0.85,
-                swapWarningBytes: 2 * 1024 * 1024 * 1024,
-                lowAvailableBytes: 2 * 1024 * 1024 * 1024,
+                swapWarningBytes: ByteConstants.twoGB,
+                lowAvailableBytes: ByteConstants.twoGB,
                 consecutiveSamplesForNotification: 2
             )
         case .custom:
@@ -395,9 +402,41 @@ public enum ProcessControl {
     }
 }
 
+public enum ByteConstants {
+    public static let KB: Int64 = 1024
+    public static let MB: Int64 = 1024 * 1024
+    public static let GB: Int64 = 1024 * 1024 * 1024
+
+    public static let halfGB: Int64 = 512 * MB
+    public static let oneGB: Int64 = GB
+    public static let twoGB: Int64 = 2 * GB
+    public static let fourGB: Int64 = 4 * GB
+    public static let eightGB: Int64 = 8 * GB
+}
+
 public extension Int64 {
     var memwatchGB: Double {
-        Double(self) / 1024 / 1024 / 1024
+        Double(self) / Double(ByteConstants.GB)
+    }
+}
+
+public enum PressurePresentation {
+    public static func title(for level: PressureLevel) -> String {
+        switch level {
+        case .critical: "Critical"
+        case .warning: "Warning"
+        case .normal: "Normal"
+        case .unknown: "Sampling"
+        }
+    }
+
+    public static func systemImage(for level: PressureLevel) -> String {
+        switch level {
+        case .critical: "exclamationmark.octagon.fill"
+        case .warning: "exclamationmark.triangle.fill"
+        case .normal: "checkmark.circle.fill"
+        case .unknown: "circle.dotted"
+        }
     }
 }
 
@@ -407,7 +446,7 @@ public enum MenuStatus {
         if analysis.level == .critical {
             return "MEM !!"
         }
-        if snapshot.swapUsedBytes >= 1024 * 1024 * 1024 {
+        if snapshot.swapUsedBytes >= ByteConstants.oneGB {
             return "SWAP \(Int(round(snapshot.swapUsedBytes.memwatchGB)))G"
         }
         if analysis.growingProcess != nil {
@@ -420,7 +459,7 @@ public enum MenuStatus {
 public enum MemoryGuidance {
     public static func actions(snapshot: MemorySnapshot, analysis: MemoryAnalysis) -> [MemoryAction] {
         var actions: [MemoryAction] = []
-        let needsCleanup = analysis.level >= .warning || snapshot.swapUsedBytes >= 1024 * 1024 * 1024 || analysis.growingProcess != nil
+        let needsCleanup = analysis.level >= .warning || snapshot.swapUsedBytes >= ByteConstants.oneGB || analysis.growingProcess != nil
 
         guard needsCleanup else {
             return [
@@ -453,7 +492,7 @@ public enum MemoryGuidance {
         if let chromeRenderer = snapshot.topProcesses.first(where: { process in
             process.kind == .renderer
                 && process.appName.localizedCaseInsensitiveContains("Chrome")
-                && process.residentBytes >= 512 * 1024 * 1024
+                && process.residentBytes >= ByteConstants.halfGB
         }) {
             actions.append(
                 MemoryAction(
@@ -464,7 +503,7 @@ public enum MemoryGuidance {
             )
         }
 
-        if snapshot.swapUsedBytes >= 1024 * 1024 * 1024 || analysis.level >= .warning {
+        if snapshot.swapUsedBytes >= ByteConstants.oneGB || analysis.level >= .warning {
             actions.append(
                 MemoryAction(
                     title: "Open Activity Monitor",
@@ -496,6 +535,7 @@ public enum DiagnosticReport {
             "State: \(analysis.level.rawValue)",
             "Used: \(formatBytes(snapshot.usedBytes)) / \(formatBytes(snapshot.totalBytes)) (\(formatPercent(snapshot.usedRatio)))",
             "Available: \(formatBytes(snapshot.availableBytes))",
+            "Cached Files: \(formatBytes(snapshot.cachedFilesBytes)) (reclaimable)",
             "Swap: \(formatBytes(snapshot.swapUsedBytes))",
             "Pressure: \(snapshot.pressure.rawValue)"
         ]

@@ -25,6 +25,7 @@ enum OnceCommand {
             print("state: \(analysis.level.rawValue)")
             print("used: \(formatBytes(snapshot.usedBytes)) / \(formatBytes(snapshot.totalBytes)) (\(formatPercent(snapshot.usedRatio)))")
             print("available: \(formatBytes(snapshot.availableBytes))")
+            print("cached files: \(formatBytes(snapshot.cachedFilesBytes)) (reclaimable)")
             print("swap: \(formatBytes(snapshot.swapUsedBytes))")
             print("pressure: \(snapshot.pressure.rawValue)")
             if !analysis.reasons.isEmpty {
@@ -79,7 +80,8 @@ enum SelfTest {
             """
             let counters = try MemorySampler.parseVMStat(vm, totalMemoryBytes: 16_384 * 20_000)
             expect(counters.freeBytes == 16_384 * (1024 + 512), "parseVMStat free", &failures)
-            expect(counters.usedBytes == 16_384 * (2000 + 3000 + 4000 + 1000), "parseVMStat used", &failures)
+            expect(counters.usedBytes == 16_384 * (2000 + 4000 + 1000), "parseVMStat used", &failures)
+            expect(counters.cachedFilesBytes == 16_384 * 3000, "parseVMStat cached files", &failures)
 
             let swap = MemorySampler.parseSwapFromSysctl("vm.swapusage: total = 35840.00M  used = 34746.31M  free = 1093.69M  (encrypted)")
             expect(swap == Int64(34_746.31 * 1024 * 1024), "parse sysctl swap", &failures)
@@ -155,12 +157,7 @@ struct MemWatchApp: App {
     }
 
     private var menuColor: Color {
-        switch monitor.analysis.level {
-        case .critical: .red
-        case .warning: .orange
-        case .normal: .green
-        case .unknown: .secondary
-        }
+        pressureColor(for: monitor.analysis.level)
     }
 }
 
@@ -234,6 +231,25 @@ final class DiagnosticsWindowController {
         self.window = window
     }
 }
+
+// MARK: - Shared UI Helpers
+
+private func pressureColor(for level: PressureLevel) -> Color {
+    switch level {
+    case .critical: .red
+    case .warning: .orange
+    case .normal: .green
+    case .unknown: .secondary
+    }
+}
+
+private func copyReportToClipboard(snapshot: MemorySnapshot, analysis: MemoryAnalysis) {
+    let report = DiagnosticReport.text(snapshot: snapshot, analysis: analysis)
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(report, forType: .string)
+}
+
+// MARK: - Status Popover
 
 struct StatusPopover: View {
     @EnvironmentObject private var monitor: MemoryMonitor
@@ -324,7 +340,10 @@ struct StatusPopover: View {
                 metricText("Available", formatBytes(snapshot.availableBytes))
             }
             GridRow {
+                metricText("Cached", formatBytes(snapshot.cachedFilesBytes))
                 metricText("Swap", formatBytes(snapshot.swapUsedBytes))
+            }
+            GridRow {
                 metricText("Pressure", snapshot.pressure.rawValue.capitalized)
             }
         }
@@ -442,30 +461,15 @@ struct StatusPopover: View {
     }
 
     private var statusTitle: String {
-        switch monitor.analysis.level {
-        case .critical: "Critical"
-        case .warning: "Warning"
-        case .normal: "Normal"
-        case .unknown: "Sampling"
-        }
+        PressurePresentation.title(for: monitor.analysis.level)
     }
 
     private var statusIcon: String {
-        switch monitor.analysis.level {
-        case .critical: "exclamationmark.octagon.fill"
-        case .warning: "exclamationmark.triangle.fill"
-        case .normal: "checkmark.circle.fill"
-        case .unknown: "circle.dotted"
-        }
+        PressurePresentation.systemImage(for: monitor.analysis.level)
     }
 
     private var statusColor: Color {
-        switch monitor.analysis.level {
-        case .critical: .red
-        case .warning: .orange
-        case .normal: .green
-        case .unknown: .secondary
-        }
+        pressureColor(for: monitor.analysis.level)
     }
 
     private func summaryLine(_ snapshot: MemorySnapshot) -> String {
@@ -485,7 +489,7 @@ struct StatusPopover: View {
         if monitor.analysis.growingProcess != nil {
             return "chart.line.uptrend.xyaxis"
         }
-        if let top = snapshot.topProcesses.first, top.kind == .renderer, top.residentBytes >= 1024 * 1024 * 1024 {
+        if let top = snapshot.topProcesses.first, top.kind == .renderer, top.residentBytes >= ByteConstants.oneGB {
             return "safari.fill"
         }
         return "checkmark.circle.fill"
@@ -501,7 +505,7 @@ struct StatusPopover: View {
         if monitor.analysis.growingProcess != nil {
             return "Growing process"
         }
-        if let top = snapshot.topProcesses.first, top.kind == .renderer, top.residentBytes >= 1024 * 1024 * 1024 {
+        if let top = snapshot.topProcesses.first, top.kind == .renderer, top.residentBytes >= ByteConstants.oneGB {
             return "Largest tab process"
         }
         return "Looks healthy"
@@ -517,7 +521,7 @@ struct StatusPopover: View {
         if let growing = monitor.analysis.growingProcess {
             return "\(growing.name) grew by \(formatBytes(growing.deltaBytes)). Watch \(growing.appName) first."
         }
-        if let top = snapshot.topProcesses.first, top.kind == .renderer, top.residentBytes >= 1024 * 1024 * 1024 {
+        if let top = snapshot.topProcesses.first, top.kind == .renderer, top.residentBytes >= ByteConstants.oneGB {
             return "\(top.name) uses \(formatBytes(top.residentBytes)). Use the browser task manager if it grows."
         }
         return "No action needed right now."
@@ -525,9 +529,7 @@ struct StatusPopover: View {
 
     private func copyReport() {
         guard let snapshot = monitor.snapshot else { return }
-        let report = DiagnosticReport.text(snapshot: snapshot, analysis: monitor.analysis)
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(report, forType: .string)
+        copyReportToClipboard(snapshot: snapshot, analysis: monitor.analysis)
         copiedReport = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
             copiedReport = false
@@ -761,6 +763,7 @@ struct DiagnosticsWindowView: View {
             GridRow {
                 DiagnosticsMetric(title: "Used", value: formatBytes(snapshot.usedBytes))
                 DiagnosticsMetric(title: "Available", value: formatBytes(snapshot.availableBytes))
+                DiagnosticsMetric(title: "Cached", value: formatBytes(snapshot.cachedFilesBytes))
                 DiagnosticsMetric(title: "Swap", value: formatBytes(snapshot.swapUsedBytes))
                 DiagnosticsMetric(title: "Pressure", value: snapshot.pressure.rawValue.capitalized)
             }
@@ -834,27 +837,16 @@ struct DiagnosticsWindowView: View {
     }
 
     private var statusIcon: String {
-        switch monitor.analysis.level {
-        case .critical: "exclamationmark.octagon.fill"
-        case .warning: "exclamationmark.triangle.fill"
-        case .normal: "checkmark.circle.fill"
-        case .unknown: "circle.dotted"
-        }
+        PressurePresentation.systemImage(for: monitor.analysis.level)
     }
 
     private var statusColor: Color {
-        switch monitor.analysis.level {
-        case .critical: .red
-        case .warning: .orange
-        case .normal: .green
-        case .unknown: .secondary
-        }
+        pressureColor(for: monitor.analysis.level)
     }
 
     private func copyReport() {
         guard let snapshot = monitor.snapshot else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(DiagnosticReport.text(snapshot: snapshot, analysis: monitor.analysis), forType: .string)
+        copyReportToClipboard(snapshot: snapshot, analysis: monitor.analysis)
         copiedReport = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
             copiedReport = false
