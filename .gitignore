@@ -3,6 +3,7 @@
 DerivedData/
 .swiftpm/
 .superpowers/
+.gstack/
 dist/
 *.xcuserdata/
 *.xcuserstate

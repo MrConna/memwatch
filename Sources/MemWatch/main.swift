@@ -322,42 +322,33 @@ struct StatusPopover: View {
     }
 
     private var controls: some View {
-        HStack {
-            Button {
+        HStack(spacing: 8) {
+            ControlIconButton(title: "Refresh", systemImage: "arrow.clockwise") {
                 monitor.sampleNow()
-            } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
-            }
-            .help("Refresh")
-            if !monitor.events.isEmpty {
-                Button {
-                    monitor.clearEvents()
-                } label: {
-                    Label("Clear", systemImage: "trash")
-                }
-                .help("Clear events")
             }
             if monitor.snapshot != nil {
-                Button {
+                ControlIconButton(
+                    title: copiedReport ? "Copied" : "Copy diagnostic report",
+                    systemImage: copiedReport ? "checkmark" : "doc.on.doc",
+                    highlighted: copiedReport
+                ) {
                     copyReport()
-                } label: {
-                    Label(copiedReport ? "Copied" : "Copy Report", systemImage: copiedReport ? "checkmark" : "doc.on.doc")
                 }
-                .help("Copy diagnostic report")
             }
             Spacer()
-            Button {
+            if !monitor.events.isEmpty {
+                ControlIconButton(title: "Clear events", systemImage: "trash") {
+                    monitor.clearEvents()
+                }
+            }
+            Divider()
+                .frame(height: 18)
+            ControlIconButton(title: "Settings", systemImage: "gear") {
                 openSettingsWindow()
-            } label: {
-                Label("Settings", systemImage: "gear")
             }
-            .help("Settings")
-            Button(role: .destructive) {
+            ControlIconButton(title: "Quit MemWatch", systemImage: "power", role: .destructive) {
                 NSApp.terminate(nil)
-            } label: {
-                Label("Quit", systemImage: "power")
             }
-            .help("Quit")
         }
         .buttonStyle(.borderless)
         .controlSize(.small)
@@ -635,6 +626,37 @@ struct SectionHeader: View {
             .foregroundStyle(.secondary)
             .textCase(.uppercase)
             .padding(.top, 2)
+    }
+}
+
+struct ControlIconButton: View {
+    let title: String
+    let systemImage: String
+    var role: ButtonRole?
+    var highlighted = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(role: role, action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 13, weight: .semibold))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(foregroundStyle)
+                .frame(width: 28, height: 24)
+                .contentShape(Rectangle())
+        }
+        .help(title)
+        .accessibilityLabel(Text(title))
+    }
+
+    private var foregroundStyle: Color {
+        if role == .destructive {
+            return .red
+        }
+        if highlighted {
+            return .green
+        }
+        return .primary
     }
 }
 
