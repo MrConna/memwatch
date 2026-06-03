@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 import MemWatchCore
 import SwiftUI
@@ -790,7 +791,7 @@ struct DiagnosticsWindowView: View {
         DiagnosticsSection(title: "Process Details") {
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(processes) { process in
-                    ProcessRow(process: process)
+                    ProcessRow(process: process, showsActions: true)
                 }
             }
         }
@@ -1025,9 +1026,12 @@ struct MemoryActionRow: View {
 
 struct ProcessRow: View {
     let process: ProcessUsage
+    var showsActions = false
+    @State private var pendingAction: ProcessControlAction?
+    @State private var actionResult: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(process.name)
@@ -1050,12 +1054,134 @@ struct ProcessRow: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
+            if showsActions {
+                processActions
+            }
+            if let actionResult {
+                Text(actionResult)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
-        .accessibilityElement(children: .combine)
+        .confirmationDialog(
+            pendingAction?.title ?? "Confirm Process Action",
+            isPresented: Binding(
+                get: { pendingAction != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        pendingAction = nil
+                    }
+                }
+            ),
+            titleVisibility: .visible
+        ) {
+            if let pendingAction {
+                Button(pendingAction.title, role: .destructive) {
+                    perform(pendingAction)
+                    self.pendingAction = nil
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                pendingAction = nil
+            }
+        } message: {
+            Text(pendingAction?.detail ?? "")
+        }
     }
 
     private var shortRecommendation: String {
         process.recommendation
+    }
+
+    private var processActions: some View {
+        HStack(spacing: 8) {
+            ForEach(ProcessControl.actions(for: process)) { action in
+                Button(role: action.kind == .forceQuitProcess ? .destructive : nil) {
+                    handle(action)
+                } label: {
+                    Label(actionButtonTitle(action), systemImage: action.systemImage)
+                        .labelStyle(.titleAndIcon)
+                }
+                .controlSize(.small)
+                .buttonStyle(.bordered)
+                .help(action.detail)
+                .accessibilityLabel(Text(action.title))
+                .accessibilityHint(Text(action.detail))
+            }
+        }
+    }
+
+    private func actionButtonTitle(_ action: ProcessControlAction) -> String {
+        switch action.kind {
+        case .activateApp: "Show"
+        case .quitApp: "Quit App"
+        case .forceQuitProcess: "Force PID"
+        }
+    }
+
+    private func handle(_ action: ProcessControlAction) {
+        if action.requiresConfirmation {
+            pendingAction = action
+        } else {
+            perform(action)
+        }
+    }
+
+    private func perform(_ action: ProcessControlAction) {
+        switch action.kind {
+        case .activateApp:
+            activateOwningApplication()
+        case .quitApp:
+            quitOwningApplication()
+        case .forceQuitProcess:
+            forceQuitProcess()
+        }
+    }
+
+    private func activateOwningApplication() {
+        guard let app = owningApplication() ?? NSRunningApplication(processIdentifier: process.pid) else {
+            actionResult = "Could not find a running app for \(process.appName)."
+            return
+        }
+        app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+        actionResult = "Brought \(app.localizedName ?? process.appName) forward."
+    }
+
+    private func quitOwningApplication() {
+        let apps = owningApplications()
+        guard !apps.isEmpty else {
+            actionResult = "Could not find a running app named \(process.appName)."
+            return
+        }
+        for app in apps {
+            app.terminate()
+        }
+        actionResult = "Asked \(process.appName) to quit normally."
+    }
+
+    private func forceQuitProcess() {
+        if let app = NSRunningApplication(processIdentifier: process.pid) {
+            app.forceTerminate()
+            actionResult = "Force quit PID \(process.pid)."
+            return
+        }
+
+        if Darwin.kill(process.pid, SIGKILL) == 0 {
+            actionResult = "Force quit PID \(process.pid)."
+        } else {
+            actionResult = "Could not force quit PID \(process.pid). It may have exited or require more permission."
+        }
+    }
+
+    private func owningApplication() -> NSRunningApplication? {
+        owningApplications().first
+    }
+
+    private func owningApplications() -> [NSRunningApplication] {
+        NSWorkspace.shared.runningApplications.filter { app in
+            app.localizedName == process.appName && app.activationPolicy != .prohibited
+        }
     }
 }
 

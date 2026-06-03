@@ -338,6 +338,63 @@ public struct MemoryAction: Identifiable, Equatable {
     }
 }
 
+public enum ProcessControlActionKind: String, Equatable {
+    case activateApp
+    case quitApp
+    case forceQuitProcess
+}
+
+public struct ProcessControlAction: Identifiable, Equatable {
+    public var id: String { kind.rawValue }
+    public var kind: ProcessControlActionKind
+    public var title: String
+    public var detail: String
+    public var systemImage: String
+    public var requiresConfirmation: Bool
+
+    public init(
+        kind: ProcessControlActionKind,
+        title: String,
+        detail: String,
+        systemImage: String,
+        requiresConfirmation: Bool
+    ) {
+        self.kind = kind
+        self.title = title
+        self.detail = detail
+        self.systemImage = systemImage
+        self.requiresConfirmation = requiresConfirmation
+    }
+}
+
+public enum ProcessControl {
+    public static func actions(for process: ProcessUsage) -> [ProcessControlAction] {
+        [
+            ProcessControlAction(
+                kind: .activateApp,
+                title: "Show \(process.appName)",
+                detail: "Bring the owning app forward so you can close a tab, window, or document yourself.",
+                systemImage: "macwindow",
+                requiresConfirmation: false
+            ),
+            ProcessControlAction(
+                kind: .quitApp,
+                title: "Quit \(process.appName)",
+                detail: "Ask \(process.appName) to quit normally. This can close all related windows, so save work first.",
+                systemImage: "xmark.circle",
+                requiresConfirmation: true
+            ),
+            ProcessControlAction(
+                kind: .forceQuitProcess,
+                title: "Force Quit PID \(process.pid)",
+                detail: "Immediately end PID \(process.pid). Use this only after saving work or when the process is stuck.",
+                systemImage: "exclamationmark.octagon",
+                requiresConfirmation: true
+            )
+        ]
+    }
+}
+
 public extension Int64 {
     var memwatchGB: Double {
         Double(self) / 1024 / 1024 / 1024
