@@ -129,7 +129,7 @@ struct MemWatchApp: App {
         MenuBarExtra {
             StatusPopover()
                 .environmentObject(monitor)
-                .frame(width: 360)
+                .frame(width: 380, height: 560)
                 .onAppear {
                     monitor.start()
                 }
@@ -210,8 +210,9 @@ struct StatusPopover: View {
                         loadingState
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxHeight: 430)
+            .frame(height: 470)
             Divider()
             controls
         }
