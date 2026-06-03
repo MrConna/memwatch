@@ -18,6 +18,7 @@ It is designed for people who regularly see "your system has run out of applicat
 - Diagnosis engine for sustained pressure, heavy swap, low available memory, and fast-growing processes.
 - Top app aggregation, so Chrome/Lark/editor helper processes are grouped by owning app.
 - Process-kind labeling for main app, renderer, GPU, helper, and unknown processes.
+- Action guidance with concrete release steps, process details, and an Activity Monitor shortcut.
 - Safer Chrome guidance: close the related tab or use Chrome Task Manager before force quitting helpers.
 - Notification cooling, so repeated abnormal samples do not spam the user.
 - Recovery state when memory pressure returns to normal.
@@ -62,6 +63,8 @@ swift run MemWatch --report
 ```
 
 This prints a copy-ready diagnostic report. The menu bar popover also has a `Copy Report` action.
+
+The report includes concrete release guidance, top app totals, process-level recommendations, and reminders to save work before quitting or force quitting apps.
 
 ## Self-Test
 

@@ -197,14 +197,21 @@ struct StatusPopover: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
-            if let snapshot = monitor.snapshot {
-                memorySummary(snapshot)
-                metricGrid(snapshot)
-                nextStep(snapshot)
-                appList(Array(snapshot.appGroups.prefix(3)))
-            } else {
-                loadingState
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if let snapshot = monitor.snapshot {
+                        memorySummary(snapshot)
+                        metricGrid(snapshot)
+                        nextStep(snapshot)
+                        actionList(snapshot)
+                        appList(Array(snapshot.appGroups.prefix(3)))
+                        processList(Array(snapshot.topProcesses.prefix(4)))
+                    } else {
+                        loadingState
+                    }
+                }
             }
+            .frame(maxHeight: 430)
             Divider()
             controls
         }
@@ -321,6 +328,24 @@ struct StatusPopover: View {
         }
     }
 
+    private func actionList(_ snapshot: MemorySnapshot) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            SectionHeader(title: "How to Free Memory")
+            ForEach(MemoryGuidance.actions(snapshot: snapshot, analysis: monitor.analysis).prefix(3)) { action in
+                MemoryActionRow(action: action)
+            }
+        }
+    }
+
+    private func processList(_ processes: [ProcessUsage]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            SectionHeader(title: "Process Details")
+            ForEach(processes) { process in
+                ProcessRow(process: process)
+            }
+        }
+    }
+
     private var controls: some View {
         HStack(spacing: 8) {
             ControlIconButton(title: "Refresh", systemImage: "arrow.clockwise") {
@@ -343,6 +368,9 @@ struct StatusPopover: View {
             }
             Divider()
                 .frame(height: 18)
+            ControlIconButton(title: "Open Activity Monitor", systemImage: "gauge.with.dots.needle.67percent") {
+                openActivityMonitor()
+            }
             ControlIconButton(title: "Settings", systemImage: "gear") {
                 openSettingsWindow()
             }
@@ -684,6 +712,30 @@ struct AppGroupRow: View {
     }
 }
 
+struct MemoryActionRow: View {
+    let action: MemoryAction
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: action.systemImage)
+                .font(.caption)
+                .foregroundStyle(.blue)
+                .frame(width: 16)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(action.title)
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                Text(action.detail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
 struct ProcessRow: View {
     let process: ProcessUsage
 
@@ -709,22 +761,20 @@ struct ProcessRow: View {
                 Text(shortRecommendation)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .lineLimit(2)
             }
         }
         .accessibilityElement(children: .combine)
     }
 
     private var shortRecommendation: String {
-        switch process.kind {
-        case .renderer:
-            return "Close the related tab or use Chrome Task Manager."
-        case .gpu:
-            return "Close video-heavy tabs before restarting Chrome."
-        default:
-            return process.recommendation
-        }
+        process.recommendation
     }
+}
+
+func openActivityMonitor() {
+    let url = URL(fileURLWithPath: "/System/Applications/Utilities/Activity Monitor.app")
+    NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
 }
 
 func openLoginItems() {

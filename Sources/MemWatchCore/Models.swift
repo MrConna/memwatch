@@ -325,6 +325,19 @@ public struct ProcessGrowth: Equatable {
     }
 }
 
+public struct MemoryAction: Identifiable, Equatable {
+    public var id: String { title }
+    public var title: String
+    public var detail: String
+    public var systemImage: String
+
+    public init(title: String, detail: String, systemImage: String) {
+        self.title = title
+        self.detail = detail
+        self.systemImage = systemImage
+    }
+}
+
 public extension Int64 {
     var memwatchGB: Double {
         Double(self) / 1024 / 1024 / 1024
@@ -347,6 +360,77 @@ public enum MenuStatus {
     }
 }
 
+public enum MemoryGuidance {
+    public static func actions(snapshot: MemorySnapshot, analysis: MemoryAnalysis) -> [MemoryAction] {
+        var actions: [MemoryAction] = []
+        let needsCleanup = analysis.level >= .warning || snapshot.swapUsedBytes >= 1024 * 1024 * 1024 || analysis.growingProcess != nil
+
+        guard needsCleanup else {
+            return [
+                MemoryAction(
+                    title: "No urgent cleanup",
+                    detail: "Memory looks stable. Keep watching if the menu bar changes to SWAP, MEM UP, or MEM !!.",
+                    systemImage: "checkmark.circle"
+                )
+            ]
+        }
+
+        if let topGroup = snapshot.appGroups.first {
+            actions.append(
+                MemoryAction(
+                    title: "Save work first",
+                    detail: "\(topGroup.name) could free about \(formatBytes(topGroup.residentBytes)) if you quit or restart it. Save files and drafts before closing.",
+                    systemImage: "square.and.pencil"
+                )
+            )
+        } else {
+            actions.append(
+                MemoryAction(
+                    title: "Save work first",
+                    detail: "Save files and drafts before quitting apps or force quitting processes.",
+                    systemImage: "square.and.pencil"
+                )
+            )
+        }
+
+        if let chromeRenderer = snapshot.topProcesses.first(where: { process in
+            process.kind == .renderer
+                && process.appName.localizedCaseInsensitiveContains("Chrome")
+                && process.residentBytes >= 512 * 1024 * 1024
+        }) {
+            actions.append(
+                MemoryAction(
+                    title: "Close heavy Chrome tabs",
+                    detail: "\(chromeRenderer.name) uses \(formatBytes(chromeRenderer.residentBytes)). Open Chrome Task Manager from Chrome > Window > Task Manager, then close the heaviest tab.",
+                    systemImage: "rectangle.on.rectangle"
+                )
+            )
+        }
+
+        if snapshot.swapUsedBytes >= 1024 * 1024 * 1024 || analysis.level >= .warning {
+            actions.append(
+                MemoryAction(
+                    title: "Open Activity Monitor",
+                    detail: "Sort by Memory, inspect the top apps, then quit only apps you recognize and do not need right now.",
+                    systemImage: "gauge.with.dots.needle.67percent"
+                )
+            )
+        }
+
+        if let growing = analysis.growingProcess {
+            actions.append(
+                MemoryAction(
+                    title: "Watch growing process",
+                    detail: "\(growing.name) grew by \(formatBytes(growing.deltaBytes)). Restart \(growing.appName) if it keeps climbing after you save work.",
+                    systemImage: "chart.line.uptrend.xyaxis"
+                )
+            )
+        }
+
+        return actions
+    }
+}
+
 public enum DiagnosticReport {
     public static func text(snapshot: MemorySnapshot, analysis: MemoryAnalysis) -> String {
         var lines: [String] = [
@@ -363,6 +447,13 @@ public enum DiagnosticReport {
             lines.append("")
             lines.append("Reasons:")
             lines.append(contentsOf: analysis.reasons.map { "- \($0)" })
+        }
+
+        let actions = MemoryGuidance.actions(snapshot: snapshot, analysis: analysis)
+        if !actions.isEmpty {
+            lines.append("")
+            lines.append("How to Free Memory:")
+            lines.append(contentsOf: actions.map { "- \($0.title): \($0.detail)" })
         }
 
         let groups = Array(snapshot.appGroups.prefix(5))
